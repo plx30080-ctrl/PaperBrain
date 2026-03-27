@@ -29,6 +29,11 @@ async function callFn(name, body) {
   const data = text ? safeJsonParse(text) : null;
 
   if (!res.ok) {
+    if (res.status === 401) {
+      throw new Error(
+        "Unauthorized. Sign out and back in, then redeploy the latest process-note function if the error persists.",
+      );
+    }
     const message = data?.error ?? data?.message ?? text ?? `${res.status} ${res.statusText}`;
     throw new Error(message);
   }
