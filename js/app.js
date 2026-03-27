@@ -751,7 +751,7 @@ async function processJob(jobId, file, type) {
     await loadNotes();
 
     if (result.note?.id) {
-      openNote(result.note.id);
+      await openNote(result.note.id);
       API.findRelations(result.note.id).catch(() => {});
       triggerClarificationPopup(result.note);
     }
