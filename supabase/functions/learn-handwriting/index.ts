@@ -39,16 +39,19 @@ Deno.serve(async (req) => {
 
   try {
     const authHeader = req.headers.get("authorization") ?? "";
-    const token = authHeader.replace("Bearer ", "");
-
     const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_ANON_KEY")!,
+      { global: { headers: { authorization: authHeader } } },
+    );
+
+    const { data: { user }, error: authErr } = await admin.auth.getUser();
+    if (authErr || !user) return json({ error: "Unauthorized" }, 401);
+
+    const admin = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
-
-    const { data: { user }, error: authErr } =
-      await supabase.auth.getUser(token);
-    if (authErr || !user) return json({ error: "Unauthorized" }, 401);
 
     const body = await req.json();
     const { noteId, corrections = [], clarifications = [] } = body as {
@@ -78,13 +81,13 @@ Deno.serve(async (req) => {
     const allRows = [...correctionRows, ...clarificationRows];
     if (!allRows.length) return json({ ok: true, synthesized: false });
 
-    const { error: insErr } = await supabase
+    const { error: insErr } = await admin
       .from("handwriting_corrections")
       .insert(allRows);
     if (insErr) throw insErr;
 
     // ── Count total uncondensed corrections ───────────────────
-    const { count } = await supabase
+    const { count } = await admin
       .from("handwriting_corrections")
       .select("id", { count: "exact", head: true })
       .eq("user_id", user.id);
@@ -97,7 +100,7 @@ Deno.serve(async (req) => {
     }
 
     // ── Load recent corrections for synthesis ─────────────────
-    const { data: recent } = await supabase
+    const { data: recent } = await admin
       .from("handwriting_corrections")
       .select("original, correction, context_snippet")
       .eq("user_id", user.id)
@@ -113,7 +116,7 @@ Deno.serve(async (req) => {
       .join("\n");
 
     // ── Fetch existing context ────────────────────────────────
-    const { data: profile } = await supabase
+    const { data: profile } = await admin
       .from("profiles")
       .select("handwriting_context, model")
       .eq("id", user.id)
@@ -163,7 +166,7 @@ Return a SINGLE compact paragraph (max 4 sentences, under ${MAX_CONTEXT_CHARS} c
       newContext = newContext.slice(0, MAX_CONTEXT_CHARS).trim();
     }
 
-    await supabase
+    await admin
       .from("profiles")
       .update({ handwriting_context: newContext })
       .eq("id", user.id);

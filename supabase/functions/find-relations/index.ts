@@ -26,22 +26,25 @@ Deno.serve(async (req) => {
 
   try {
     const authHeader = req.headers.get("authorization") ?? "";
-    const token = authHeader.replace("Bearer ", "");
-
     const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_ANON_KEY")!,
+      { global: { headers: { authorization: authHeader } } },
+    );
+
+    const { data: { user }, error: authErr } = await admin.auth.getUser();
+    if (authErr || !user) return json({ error: "Unauthorized" }, 401);
+
+    const admin = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
-
-    const { data: { user }, error: authErr } =
-      await supabase.auth.getUser(token);
-    if (authErr || !user) return json({ error: "Unauthorized" }, 401);
 
     const { noteId } = await req.json();
     if (!noteId) return json({ error: "noteId required" }, 400);
 
     // ── Load the new note ─────────────────────────────────────
-    const { data: newNote } = await supabase
+    const { data: newNote } = await admin
       .from("notes")
       .select("id, title, summary, tags")
       .eq("id", noteId)
@@ -51,7 +54,7 @@ Deno.serve(async (req) => {
     if (!newNote) return json({ error: "Note not found" }, 404);
 
     // ── Load up to 40 other notes for comparison ──────────────
-    const { data: candidates } = await supabase
+    const { data: candidates } = await admin
       .from("notes")
       .select("id, title, summary, tags")
       .eq("user_id", user.id)
@@ -88,7 +91,7 @@ Only include notes with meaningful topical overlap (score ≥ 0.45).
 Return ONLY the JSON array. If no notes are sufficiently related, return [].`;
 
     const anthropicKey = Deno.env.get("ANTHROPIC_API_KEY")!;
-    const { data: profile } = await supabase
+    const { data: profile } = await admin
       .from("profiles")
       .select("model")
       .eq("id", user.id)
@@ -127,7 +130,7 @@ Return ONLY the JSON array. If no notes are sufficiently related, return [].`;
     if (!related.length) return json({ ok: true, relations: [] });
 
     // ── Delete old AI relations for this note (keep manual) ───
-    await supabase
+    await admin
       .from("relations")
       .delete()
       .eq("from_id", noteId)
@@ -144,7 +147,7 @@ Return ONLY the JSON array. If no notes are sufficiently related, return [].`;
       manual: false,
     }));
 
-    const { error: relErr } = await supabase.from("relations").insert(rows);
+    const { error: relErr } = await admin.from("relations").insert(rows);
     if (relErr) throw relErr;
 
     return json({ ok: true, relations: rows });

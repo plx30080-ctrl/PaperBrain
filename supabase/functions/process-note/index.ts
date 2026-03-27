@@ -31,22 +31,28 @@ Deno.serve(async (req) => {
 
   try {
     // ── Auth ──────────────────────────────────────────────────
+    // Create a user-scoped client so getUser() uses the request's JWT.
     const authHeader = req.headers.get("authorization") ?? "";
-    const token = authHeader.replace("Bearer ", "");
-
     const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_ANON_KEY")!,
+      { global: { headers: { authorization: authHeader } } },
+    );
+
+    const { data: { user }, error: authErr } = await admin.auth.getUser();
+    if (authErr || !user) {
+      console.error("[process-note] auth error:", authErr?.message, "header present:", !!authHeader);
+      return json({ error: "Unauthorized" }, 401);
+    }
+
+    // Admin client for storage uploads and service-level writes
+    const admin = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
-    const { data: { user }, error: authErr } =
-      await supabase.auth.getUser(token);
-    if (authErr || !user) {
-      return json({ error: "Unauthorized" }, 401);
-    }
-
     // ── Fetch user profile (handwriting context + model pref) ─
-    const { data: profile } = await supabase
+    const { data: profile } = await admin
       .from("profiles")
       .select("handwriting_context, model")
       .eq("id", user.id)
@@ -162,7 +168,7 @@ Return ONLY the JSON object.`;
     // ── Full mode: save note + images to Supabase ─────────────
     const now = new Date().toISOString();
 
-    const { data: note, error: insertErr } = await supabase
+    const { data: note, error: insertErr } = await admin
       .from("notes")
       .insert({
         user_id: user.id,
@@ -189,7 +195,7 @@ Return ONLY the JSON object.`;
       const binary = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
       const path = `${user.id}/${note.id}/${i}.jpg`;
 
-      await supabase.storage.from("note-images").upload(path, binary, {
+      await admin.storage.from("note-images").upload(path, binary, {
         contentType: "image/jpeg",
         upsert: true,
       });
@@ -203,7 +209,7 @@ Return ONLY the JSON object.`;
     }
 
     if (imageRows.length) {
-      await supabase.from("note_images").insert(imageRows);
+      await admin.from("note_images").insert(imageRows);
     }
 
     return json({ ok: true, note }, 200);
