@@ -2,22 +2,39 @@
    api.js – Anthropic API integration
    ============================================================ */
 
-const API_URL = 'https://api.anthropic.com/v1/messages';
-const API_VER = '2023-06-01';
+const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
+const API_VER       = '2023-06-01';
+
+/**
+ * If the user has configured a proxy URL in settings (stored in localStorage
+ * as 'pb_proxy'), requests are routed through it instead of calling Anthropic
+ * directly. The proxy must forward the request to api.anthropic.com and add
+ * CORS headers. See the in-app instructions for a one-click Cloudflare Worker.
+ */
+function apiUrl() {
+  const proxy = localStorage.getItem('pb_proxy');
+  return proxy ? proxy.replace(/\/$/, '') : ANTHROPIC_URL;
+}
 
 /* ── core fetch ─────────────────────────────────────────────── */
 
 async function call(apiKey, model, messages, maxTokens = 4096) {
-  const res = await fetch(API_URL, {
-    method: 'POST',
-    headers: {
-      'content-type':                    'application/json',
-      'x-api-key':                       apiKey,
-      'anthropic-version':               API_VER,
-      'anthropic-dangerous-allow-browser': 'true',
-    },
-    body: JSON.stringify({ model, max_tokens: maxTokens, messages }),
-  });
+  let res;
+  try {
+    res = await fetch(apiUrl(), {
+      method: 'POST',
+      headers: {
+        'content-type':                      'application/json',
+        'x-api-key':                         apiKey,
+        'anthropic-version':                 API_VER,
+        'anthropic-dangerous-allow-browser': 'true',
+      },
+      body: JSON.stringify({ model, max_tokens: maxTokens, messages }),
+    });
+  } catch (networkErr) {
+    // fetch() itself throws on network failure or CORS preflight block
+    throw new CorsOrNetworkError(networkErr.message);
+  }
 
   if (!res.ok) {
     let msg = `API error ${res.status}`;
@@ -28,6 +45,13 @@ async function call(apiKey, model, messages, maxTokens = 4096) {
   const data = await res.json();
   return data.content[0].text;
 }
+
+/** Sentinel error type so callers can show a tailored CORS message */
+class CorsOrNetworkError extends Error {
+  constructor(msg) { super(msg); this.name = 'CorsOrNetworkError'; }
+}
+
+export { CorsOrNetworkError };
 
 /* ── helpers ────────────────────────────────────────────────── */
 

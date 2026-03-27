@@ -4,6 +4,7 @@
 
 import * as DB  from './db.js';
 import * as API from './api.js';
+import { CorsOrNetworkError } from './api.js';
 
 /* ── state ──────────────────────────────────────────────────── */
 
@@ -141,6 +142,112 @@ function confirm(title, message) {
     const onCancel = () => cleanup(false);
     el.confirmOk.addEventListener('click', onOk);
     el.confirmCancel.addEventListener('click', onCancel);
+  });
+}
+
+/* ── CORS help dialog ────────────────────────────────────────── */
+
+const WORKER_TEMPLATE = `// Cloudflare Worker – paste this at dash.cloudflare.com → Workers
+export default {
+  async fetch(request) {
+    const url = new URL(request.url);
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { headers: corsHeaders() });
+    }
+    const upstream = await fetch('https://api.anthropic.com' + url.pathname, {
+      method:  request.method,
+      headers: request.headers,
+      body:    request.body,
+    });
+    const body = await upstream.arrayBuffer();
+    const res  = new Response(body, upstream);
+    Object.entries(corsHeaders()).forEach(([k, v]) => res.headers.set(k, v));
+    return res;
+  },
+};
+function corsHeaders() {
+  return {
+    'Access-Control-Allow-Origin':  '*',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'content-type, x-api-key, anthropic-version, anthropic-dangerous-allow-browser',
+  };
+}`;
+
+function showCorsHelp() {
+  // Remove existing dialog if any
+  document.getElementById('cors-help-box')?.remove();
+
+  const box = document.createElement('div');
+  box.id        = 'cors-help-box';
+  box.className = 'modal-overlay';
+  box.innerHTML = `
+    <div class="modal-box" style="max-width:560px">
+      <div class="modal-header">
+        <h2>CORS — Browser API restriction</h2>
+        <button class="icon-btn" id="close-cors-help" aria-label="Close">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body" style="display:flex;flex-direction:column;gap:14px">
+        <p style="font-size:14px;color:var(--text-2)">
+          Anthropic's API blocked the request from this origin. This happens when testing from a
+          <strong>Codespace preview URL</strong>. It won't affect the deployed GitHub Pages site.
+        </p>
+
+        <div style="background:var(--primary-light);border:1px solid var(--primary-border);border-radius:var(--r);padding:12px 14px">
+          <strong style="font-size:13px;color:var(--primary)">Option 1 — Deploy to GitHub Pages (recommended)</strong>
+          <p style="font-size:13px;color:var(--text-2);margin-top:4px">
+            Push to GitHub, enable Pages in repo Settings → Pages. The deployed site at
+            <code>yourusername.github.io/PaperBrain</code> will work without a proxy.
+          </p>
+        </div>
+
+        <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px">
+          <strong style="font-size:13px">Option 2 — Cloudflare Worker proxy (free, 2 minutes)</strong>
+          <ol style="font-size:13px;color:var(--text-2);margin-top:6px;padding-left:18px;display:flex;flex-direction:column;gap:4px">
+            <li>Go to <a href="https://dash.cloudflare.com" target="_blank" rel="noopener">dash.cloudflare.com</a> → Workers &amp; Pages → Create</li>
+            <li>Click <strong>Quick edit</strong>, paste the script below, click <strong>Deploy</strong></li>
+            <li>Copy the <code>*.workers.dev</code> URL and paste it in the Proxy URL field below</li>
+          </ol>
+          <pre style="margin-top:10px;font-size:11px;background:var(--sb-bg);color:var(--sb-text);padding:10px;border-radius:6px;overflow-x:auto;white-space:pre">${escHtml(WORKER_TEMPLATE)}</pre>
+          <button class="btn btn-sm btn-outline" id="copy-worker-btn" style="margin-top:8px">Copy script</button>
+        </div>
+
+        <div class="form-group" style="margin:0">
+          <label for="proxy-url-input" style="font-size:13px">Proxy URL <span style="color:var(--text-3);font-weight:400">(optional)</span></label>
+          <div class="input-row">
+            <input type="url" id="proxy-url-input" placeholder="https://my-worker.workers.dev/v1/messages"
+                   value="${escHtml(localStorage.getItem('pb_proxy') ?? '')}" style="font-size:13px" />
+            <button class="btn btn-sm btn-primary" id="save-proxy-btn">Save</button>
+            <button class="btn btn-sm btn-outline" id="clear-proxy-btn">Clear</button>
+          </div>
+          <p class="form-hint">Leave blank to call Anthropic directly (works on GitHub Pages).</p>
+        </div>
+      </div>
+    </div>`;
+
+  document.body.appendChild(box);
+
+  box.querySelector('#close-cors-help').addEventListener('click', () => box.remove());
+  box.addEventListener('click', e => { if (e.target === box) box.remove(); });
+
+  box.querySelector('#copy-worker-btn').addEventListener('click', () => {
+    navigator.clipboard.writeText(WORKER_TEMPLATE).then(() => toast('Worker script copied', 'success'));
+  });
+
+  box.querySelector('#save-proxy-btn').addEventListener('click', () => {
+    const url = box.querySelector('#proxy-url-input').value.trim();
+    if (url) { localStorage.setItem('pb_proxy', url); toast('Proxy URL saved — try testing again', 'success'); }
+    box.remove();
+  });
+
+  box.querySelector('#clear-proxy-btn').addEventListener('click', () => {
+    localStorage.removeItem('pb_proxy');
+    box.querySelector('#proxy-url-input').value = '';
+    toast('Proxy cleared', 'info');
   });
 }
 
@@ -439,7 +546,11 @@ async function processJob(job) {
   } catch (err) {
     console.error('[processJob]', err);
     updateJob(job, err.message, 0, false, true);
-    toast(`Failed: "${job.name}" — ${err.message}`, 'error', 6000);
+    if (err instanceof CorsOrNetworkError) {
+      showCorsHelp();
+    } else {
+      toast(`Failed: "${job.name}" — ${err.message}`, 'error', 6000);
+    }
   }
 }
 
@@ -687,29 +798,26 @@ function setupEvents() {
     const key = el.apiKeyInput.value.trim();
     if (!key) { toast('Enter a key first', 'warning'); return; }
 
-    // API calls require a served origin (https:// or localhost), not file://
     if (location.protocol === 'file:') {
-      toast('Open the app via a server (not file://) — try a Live Server extension or GitHub Pages', 'error', 8000);
+      toast('Open the app via HTTP — not as a file:// URL. Use GitHub Pages or a local server.', 'error', 8000);
       return;
     }
 
-    el.testKeyBtn.disabled = true;
+    el.testKeyBtn.disabled    = true;
     el.testKeyBtn.textContent = '…';
     try {
       await API.testApiKey(key);
       toast('API key valid ✓', 'success');
     } catch (err) {
-      // Distinguish auth failures from network/CORS errors
-      const msg = err.message.toLowerCase();
-      if (msg.includes('failed to fetch') || msg.includes('networkerror') || msg.includes('load failed')) {
-        toast('Network error — check your internet connection or browser extensions blocking requests', 'error', 7000);
-      } else if (msg.includes('401') || msg.includes('authentication') || msg.includes('invalid x-api-key')) {
-        toast('Invalid API key — check it at console.anthropic.com', 'error', 6000);
+      if (err instanceof CorsOrNetworkError) {
+        showCorsHelp();
+      } else if (err.message.includes('401') || err.message.toLowerCase().includes('authentication')) {
+        toast('Invalid API key — double-check it at console.anthropic.com', 'error', 6000);
       } else {
         toast(`API error: ${err.message}`, 'error', 6000);
       }
     } finally {
-      el.testKeyBtn.disabled   = false;
+      el.testKeyBtn.disabled    = false;
       el.testKeyBtn.textContent = 'Test';
     }
   });
