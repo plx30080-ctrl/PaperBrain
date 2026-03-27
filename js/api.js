@@ -7,20 +7,41 @@
 
 import { client, getToken } from "./auth.js";
 
+const { supabaseUrl, supabaseAnonKey } = window.PAPERBRAIN_CONFIG ?? {};
+
 async function callFn(name, body) {
   const token = getToken() ?? (await client.auth.getSession()).data.session?.access_token;
   if (!token) {
     throw new Error("You must be signed in to use this feature.");
   }
 
-  const { data, error } = await client.functions.invoke(name, {
-    body,
+  const res = await fetch(`${supabaseUrl}/functions/v1/${name}`, {
+    method: "POST",
     headers: {
+      "Content-Type": "application/json",
+      apikey: supabaseAnonKey,
       Authorization: `Bearer ${token}`,
     },
+    body: JSON.stringify(body),
   });
-  if (error) throw new Error(error.message ?? String(error));
+
+  const text = await res.text();
+  const data = text ? safeJsonParse(text) : null;
+
+  if (!res.ok) {
+    const message = data?.error ?? data?.message ?? text ?? `${res.status} ${res.statusText}`;
+    throw new Error(message);
+  }
+
   return data;
+}
+
+function safeJsonParse(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 // ── Image helpers ──────────────────────────────────────────────
