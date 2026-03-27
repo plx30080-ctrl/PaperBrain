@@ -686,13 +686,28 @@ function setupEvents() {
   el.testKeyBtn.addEventListener('click', async () => {
     const key = el.apiKeyInput.value.trim();
     if (!key) { toast('Enter a key first', 'warning'); return; }
+
+    // API calls require a served origin (https:// or localhost), not file://
+    if (location.protocol === 'file:') {
+      toast('Open the app via a server (not file://) — try a Live Server extension or GitHub Pages', 'error', 8000);
+      return;
+    }
+
     el.testKeyBtn.disabled = true;
     el.testKeyBtn.textContent = '…';
     try {
       await API.testApiKey(key);
       toast('API key valid ✓', 'success');
     } catch (err) {
-      toast(`Key invalid: ${err.message}`, 'error');
+      // Distinguish auth failures from network/CORS errors
+      const msg = err.message.toLowerCase();
+      if (msg.includes('failed to fetch') || msg.includes('networkerror') || msg.includes('load failed')) {
+        toast('Network error — check your internet connection or browser extensions blocking requests', 'error', 7000);
+      } else if (msg.includes('401') || msg.includes('authentication') || msg.includes('invalid x-api-key')) {
+        toast('Invalid API key — check it at console.anthropic.com', 'error', 6000);
+      } else {
+        toast(`API error: ${err.message}`, 'error', 6000);
+      }
     } finally {
       el.testKeyBtn.disabled   = false;
       el.testKeyBtn.textContent = 'Test';
