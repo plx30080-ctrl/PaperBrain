@@ -258,7 +258,7 @@ async function openProfileModal() {
   try {
     const profile = await DB.getProfile();
     profileNameInput.value = profile.display_name ?? "";
-    modelSelect.value = profile.model ?? "claude-sonnet-4-6";
+    modelSelect.value = profile.model ?? "claude-sonnet-4-20250514";
   } catch (_) {}
 }
 
@@ -368,9 +368,8 @@ function renderNoteModal(note) {
   switchTab("organized");
 
   // Reset annotate
-  annotateToolbar.classList.add("hidden");
-  annotateToggleBtn.classList.remove("hidden");
   destroyAnnotateEngine();
+  annotateToggleBtn.classList.remove("hidden");
 }
 
 function renderImages() {
@@ -385,7 +384,7 @@ function renderImages() {
     img.alt = `Page ${i + 1}`;
     img.loading = "lazy";
     img.addEventListener("click", () => {
-      if (annotateToolbar.classList.contains("hidden")) {
+      if (!state.annotateEngine) {
         lightboxImg.src = url;
         lightbox.classList.remove("hidden");
       }
@@ -609,17 +608,14 @@ exportMdBtn?.addEventListener("click", () => {
 function destroyAnnotateEngine() {
   state.annotateEngine?.destroy();
   state.annotateEngine = null;
+  $("annotate-fullscreen")?.classList.add("hidden");
 }
 
 annotateToggleBtn?.addEventListener("click", () => {
-  annotateToolbar.classList.remove("hidden");
-  annotateToggleBtn.classList.add("hidden");
   startAnnotateMode(0);
 });
 
 annotateDoneBtn?.addEventListener("click", () => {
-  annotateToolbar.classList.add("hidden");
-  annotateToggleBtn.classList.remove("hidden");
   destroyAnnotateEngine();
 });
 
@@ -627,24 +623,30 @@ async function startAnnotateMode(idx) {
   destroyAnnotateEngine();
   state.currentAnnotateIdx = idx;
 
-  const container = noteImagesWrap.children[idx];
-  if (!container) return;
-  const img = container.querySelector("img");
-  if (!img) return;
+  const url = state.currentImageUrls[idx];
+  if (!url) return;
 
-  let canvas = container.querySelector("canvas");
+  // Populate fullscreen image
+  const fsImg  = $("annotate-fs-img");
+  const fsWrap = $("annotate-img-wrap");
+  fsImg.src = url;
+
+  // Reuse or create canvas inside the image wrapper
+  let canvas = fsWrap.querySelector("canvas");
   if (!canvas) {
     canvas = document.createElement("canvas");
-    canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;cursor:crosshair;touch-action:none;";
-    container.appendChild(canvas);
+    fsWrap.appendChild(canvas);
   }
+
+  // Show fullscreen overlay
+  $("annotate-fullscreen").classList.remove("hidden");
 
   const rows = await DB.getAnnotations(state.currentNote.id);
   const tags  = state.currentNote.tags ?? [];
   annotateTagSelect.innerHTML = `<option value="">— pick tag —</option>` +
     tags.map((t) => `<option value="${escHtml(t)}">${escHtml(t)}</option>`).join("");
 
-  state.annotateEngine = new AnnotationEngine(canvas, img, {
+  state.annotateEngine = new AnnotationEngine(canvas, fsImg, {
     onSave: (ann) => DB.saveAnnotation({ ...ann, note_id: state.currentNote.id, image_index: idx }),
     onDelete: (id) => DB.deleteAnnotation(id),
     onSelect: (ann) => {
@@ -786,6 +788,16 @@ async function triggerClarificationPopup(note) {
     matches.push({ before: m[1], after: m[2] });
   }
   if (!matches.length) return;
+
+  // Show note image as context if available
+  const clarifyImageContext = $("clarify-image-context");
+  const clarifyNoteImg      = $("clarify-note-img");
+  if (clarifyImageContext && clarifyNoteImg && state.currentImageUrls?.[0]) {
+    clarifyNoteImg.src = state.currentImageUrls[0];
+    clarifyImageContext.classList.remove("hidden");
+  } else if (clarifyImageContext) {
+    clarifyImageContext.classList.add("hidden");
+  }
 
   clarifyItems.innerHTML = "";
   clarifyModal._noteId = note.id;

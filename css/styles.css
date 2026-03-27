@@ -14,8 +14,8 @@ a:hover { text-decoration: underline; }
 
 /* ── Theme tokens ───────────────────────────────────────────── */
 :root {
-  --accent:       #6366f1;
-  --accent-hover: #4f52d3;
+  --accent:       #1976D2;
+  --accent-hover: #1565C0;
   --danger:       #ef4444;
   --danger-hover: #dc2626;
   --success:      #10b981;
@@ -26,30 +26,30 @@ a:hover { text-decoration: underline; }
 }
 
 .theme-dark {
-  --bg:         #0f1117;
-  --bg-card:    #1a1d2e;
-  --bg-hover:   #22253a;
-  --bg-input:   #1e2133;
-  --border:     #2e3150;
-  --border-subtle: #252844;
-  --text:       #e8eaf6;
-  --text-muted: #8890b8;
-  --sidebar-bg: #13162b;
-  --topbar-bg:  #13162b;
+  --bg:         #0d1117;
+  --bg-card:    #161f2e;
+  --bg-hover:   #1c2940;
+  --bg-input:   #192337;
+  --border:     #1e3050;
+  --border-subtle: #1a2840;
+  --text:       #e2e8f0;
+  --text-muted: #7a90b0;
+  --sidebar-bg: #0f1929;
+  --topbar-bg:  #0f1929;
   color-scheme: dark;
 }
 
 .theme-light {
-  --bg:         #f5f6fa;
+  --bg:         #f0f4fa;
   --bg-card:    #ffffff;
-  --bg-hover:   #ededf7;
-  --bg-input:   #f0f0f8;
-  --border:     #dde0f0;
-  --border-subtle: #e8eaf4;
-  --text:       #1a1d3a;
-  --text-muted: #6b7094;
-  --sidebar-bg: #1a1d3a;
-  --topbar-bg:  #1a1d3a;
+  --bg-hover:   #e8eef8;
+  --bg-input:   #edf1f8;
+  --border:     #c8d6e8;
+  --border-subtle: #d8e4f0;
+  --text:       #0f1929;
+  --text-muted: #5a7090;
+  --sidebar-bg: #0f1929;
+  --topbar-bg:  #0f1929;
   color-scheme: light;
 }
 
@@ -107,8 +107,11 @@ body { background: var(--bg); color: var(--text); }
 }
 
 .auth-logo {
-  display: flex; align-items: center; gap: 10px;
-  font-size: 20px; font-weight: 700; color: var(--text); margin-bottom: 28px;
+  display: flex; align-items: center; justify-content: center;
+  margin-bottom: 28px;
+}
+.auth-logo-img {
+  height: 72px; width: auto; display: block;
 }
 
 .auth-tabs {
@@ -152,7 +155,13 @@ body { background: var(--bg); color: var(--text); }
   padding: 0 12px; height: 52px;
   background: var(--topbar-bg); border-bottom: 1px solid var(--border);
 }
-.top-bar-title { flex: 1; font-weight: 700; font-size: 17px; color: var(--text); }
+.top-bar-brand {
+  flex: 1; display: flex; align-items: center; gap: 8px;
+}
+.top-bar-logo-img {
+  height: 22px; width: auto; display: block; flex-shrink: 0;
+}
+.top-bar-title { font-weight: 700; font-size: 17px; color: #fff; }
 
 /* Sidebar overlay */
 .sidebar-overlay {
@@ -177,8 +186,11 @@ body { background: var(--bg); color: var(--text); }
   padding: 14px 16px; border-bottom: 1px solid var(--border);
 }
 .sidebar-logo {
-  display: flex; align-items: center; gap: 8px;
+  display: flex; align-items: center; gap: 10px;
   font-weight: 700; font-size: 17px; color: #fff;
+}
+.sidebar-logo-img {
+  height: 30px; width: auto; display: block; flex-shrink: 0;
 }
 
 .search-wrap {
@@ -594,6 +606,51 @@ body { background: var(--bg); color: var(--text); }
 @keyframes toastIn {
   from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── ANNOTATION FULLSCREEN ──────────────────────────────────── */
+.annotate-fullscreen {
+  position: fixed; inset: 0; z-index: 350;
+  background: #000;
+  display: flex; flex-direction: column;
+}
+.annotate-fullscreen.hidden { display: none; }
+
+.annotate-fullscreen-header {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 10px 14px;
+  background: var(--bg-card); border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.annotate-fullscreen-header .annotate-tools { display: flex; gap: 4px; }
+
+.annotate-fullscreen-body {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  overflow: hidden; position: relative;
+}
+.annotate-img-wrap {
+  position: relative; display: inline-flex; line-height: 0;
+  max-width: 100%; max-height: 100%;
+}
+.annotate-img-wrap img {
+  max-width: 100vw; max-height: calc(100dvh - 56px);
+  object-fit: contain; display: block; user-select: none;
+}
+.annotate-img-wrap canvas {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  cursor: crosshair; touch-action: none;
+}
+
+/* ── CLARIFY IMAGE CONTEXT ──────────────────────────────────── */
+.clarify-image-context {
+  padding: 0 20px 8px;
+}
+.clarify-image-context img {
+  width: 100%; border-radius: 8px; border: 1px solid var(--border);
+  max-height: 280px; object-fit: contain; background: #000;
+}
+.clarify-image-caption {
+  font-size: 12px; color: var(--text-muted); text-align: center; margin-top: 6px;
 }
 
 /* ── DESKTOP (≥ 900px): sidebar always visible ──────────────── */

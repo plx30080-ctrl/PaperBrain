@@ -26,14 +26,17 @@ Deno.serve(async (req) => {
 
   try {
     const authHeader = req.headers.get("authorization") ?? "";
+    const accessToken = authHeader.replace(/^Bearer\s+/i, "").trim();
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
     const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_ANON_KEY")!,
+      supabaseUrl,
+      supabaseAnonKey,
       { global: { headers: { authorization: authHeader } } },
     );
 
-    const { data: { user }, error: authErr } = await supabase.auth.getUser();
-    if (authErr || !user) return json({ error: "Unauthorized" }, 401);
+    const user = await getUserFromAccessToken(supabaseUrl, supabaseAnonKey, accessToken);
+    if (!user) return json({ error: "Unauthorized" }, 401);
 
     const admin = createClient(
       Deno.env.get("SUPABASE_URL")!,
@@ -105,7 +108,7 @@ Return ONLY the JSON array. If no notes are sufficiently related, return [].`;
         "anthropic-version": ANTHROPIC_VER,
       },
       body: JSON.stringify({
-        model: profile?.model ?? "claude-sonnet-4-6",
+        model: resolveAnthropicModel(profile?.model),
         max_tokens: 1024,
         messages: [{
           role: "user",
@@ -162,4 +165,30 @@ function json(body: unknown, status = 200) {
     status,
     headers: { ...CORS, "content-type": "application/json" },
   });
+}
+
+async function getUserFromAccessToken(supabaseUrl: string, supabaseAnonKey: string, accessToken: string) {
+  if (!accessToken) return null;
+
+  const res = await fetch(`${supabaseUrl}/auth/v1/user`, {
+    headers: {
+      apikey: supabaseAnonKey,
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  if (!res.ok) return null;
+  return await res.json();
+}
+
+function resolveAnthropicModel(model?: string | null) {
+  switch (model) {
+    case "claude-opus-4-6":
+      return "claude-opus-4-20250514";
+    case "claude-haiku-4-5-20251001":
+      return "claude-haiku-4-5-20251001";
+    case "claude-sonnet-4-6":
+    default:
+      return "claude-sonnet-4-20250514";
+  }
 }

@@ -8,7 +8,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE TABLE IF NOT EXISTS profiles (
   id              UUID PRIMARY KEY REFERENCES auth.users ON DELETE CASCADE,
   display_name    TEXT,
-  model           TEXT    NOT NULL DEFAULT 'claude-sonnet-4-6',
+  model           TEXT    NOT NULL DEFAULT 'claude-sonnet-4-20250514',
   -- Compact style guide accumulated from handwriting corrections
   -- e.g. "User's 'a' often looks like 'o'; dotted 'i' is often missed"
   handwriting_context TEXT NOT NULL DEFAULT '',

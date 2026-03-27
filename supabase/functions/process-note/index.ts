@@ -30,18 +30,19 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: CORS });
 
   try {
-    // ── Auth ──────────────────────────────────────────────────
-    // Create a user-scoped client so getUser() uses the request's JWT.
     const authHeader = req.headers.get("authorization") ?? "";
+    const accessToken = authHeader.replace(/^Bearer\s+/i, "").trim();
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
     const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_ANON_KEY")!,
+      supabaseUrl,
+      supabaseAnonKey,
       { global: { headers: { authorization: authHeader } } },
     );
 
-    const { data: { user }, error: authErr } = await supabase.auth.getUser();
-    if (authErr || !user) {
-      console.error("[process-note] auth error:", authErr?.message, "header present:", !!authHeader);
+    const user = await getUserFromAccessToken(supabaseUrl, supabaseAnonKey, accessToken);
+    if (!user) {
+      console.error("[process-note] auth error: invalid token", "header present:", !!authHeader);
       return json({ error: "Unauthorized" }, 401);
     }
 
@@ -137,7 +138,7 @@ Return ONLY the JSON object.`;
         "anthropic-version": ANTHROPIC_VER,
       },
       body: JSON.stringify({
-        model: profile?.model ?? "claude-sonnet-4-6",
+        model: resolveAnthropicModel(profile?.model),
         max_tokens: maxTokens,
         messages: [
           {
@@ -236,4 +237,30 @@ function parseJSON(text: string) {
   const match = cleaned.match(/\{[\s\S]*\}/);
   if (!match) throw new Error("No JSON in AI response");
   return JSON.parse(match[0]);
+}
+
+async function getUserFromAccessToken(supabaseUrl: string, supabaseAnonKey: string, accessToken: string) {
+  if (!accessToken) return null;
+
+  const res = await fetch(`${supabaseUrl}/auth/v1/user`, {
+    headers: {
+      apikey: supabaseAnonKey,
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  if (!res.ok) return null;
+  return await res.json();
+}
+
+function resolveAnthropicModel(model?: string | null) {
+  switch (model) {
+    case "claude-opus-4-6":
+      return "claude-opus-4-20250514";
+    case "claude-haiku-4-5-20251001":
+      return "claude-haiku-4-5-20251001";
+    case "claude-sonnet-4-6":
+    default:
+      return "claude-sonnet-4-20250514";
+  }
 }
