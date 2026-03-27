@@ -1,252 +1,436 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="light">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>PaperBrain – Handwritten Notes AI</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>PaperBrain</title>
   <link rel="stylesheet" href="css/styles.css" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <!-- PDF.js -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <!-- marked.js -->
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <!-- D3.js for mind map -->
+  <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
 </head>
-<body>
-<div id="app">
+<body class="theme-dark">
 
-  <!-- ===================== SETTINGS MODAL ===================== -->
-  <div id="settings-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-label="Settings">
-    <div class="modal-box">
-      <div class="modal-header">
-        <h2>Settings</h2>
-        <button class="icon-btn" id="close-settings" aria-label="Close settings">
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-        </button>
+<!-- ══════════════════════════════════════════════════
+     AUTH SCREEN  (shown when not logged in)
+════════════════════════════════════════════════════ -->
+<div id="auth-screen" class="auth-screen hidden">
+  <div class="auth-card">
+    <div class="auth-logo">
+      <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
+        <rect width="40" height="40" rx="10" fill="#6366f1"/>
+        <path d="M10 28 L15 12 L20 22 L25 16 L30 28" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      </svg>
+      <span>PaperBrain</span>
+    </div>
+
+    <div class="auth-tabs">
+      <button class="auth-tab active" data-tab="signin">Sign In</button>
+      <button class="auth-tab" data-tab="signup">Sign Up</button>
+    </div>
+
+    <form id="auth-form" class="auth-form" novalidate>
+      <div id="auth-error" class="auth-error hidden"></div>
+      <label>
+        Email
+        <input type="email" id="auth-email" autocomplete="email" placeholder="you@example.com" required />
+      </label>
+      <label>
+        Password
+        <input type="password" id="auth-password" autocomplete="current-password" placeholder="••••••••" required />
+      </label>
+      <button type="submit" id="auth-submit" class="btn-primary">Sign In</button>
+    </form>
+
+    <p class="auth-hint">
+      Don't have an account? <a href="#" id="auth-switch-link">Sign up</a>
+    </p>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════
+     MAIN APP  (shown when logged in)
+════════════════════════════════════════════════════ -->
+<div id="app" class="app hidden">
+
+  <!-- Top bar (mobile) -->
+  <header class="top-bar">
+    <button class="icon-btn" id="sidebar-toggle" aria-label="Menu">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
+        <rect y="3" width="20" height="2" rx="1"/>
+        <rect y="9" width="20" height="2" rx="1"/>
+        <rect y="15" width="20" height="2" rx="1"/>
+      </svg>
+    </button>
+    <span class="top-bar-title">PaperBrain</span>
+    <button class="icon-btn" id="search-toggle-btn" aria-label="Search">
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="8" cy="8" r="5"/><path d="M12 12l3 3"/>
+      </svg>
+    </button>
+  </header>
+
+  <!-- Sidebar overlay (mobile tap-to-close) -->
+  <div id="sidebar-overlay" class="sidebar-overlay"></div>
+
+  <!-- ── Sidebar ── -->
+  <aside id="sidebar" class="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-logo">
+        <svg width="28" height="28" viewBox="0 0 40 40" fill="none">
+          <rect width="40" height="40" rx="10" fill="#6366f1"/>
+          <path d="M10 28 L15 12 L20 22 L25 16 L30 28" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        </svg>
+        PaperBrain
       </div>
-      <div class="modal-body">
-        <!-- CORS banner — shown automatically on GitHub Pages -->
-        <div id="cors-banner" class="cors-banner hidden">
-          <strong>⚠️ One-time setup required</strong><br>
-          Browsers block direct calls to api.anthropic.com (CORS policy). You need a small free proxy — takes ~2 minutes. See the <em>Proxy URL</em> field below.
-        </div>
+      <button class="icon-btn" id="sidebar-close">✕</button>
+    </div>
 
-        <div class="form-group">
-          <label for="api-key-input">Anthropic API Key</label>
-          <div class="input-row">
-            <input type="password" id="api-key-input" placeholder="sk-ant-api03-..." autocomplete="off" spellcheck="false" />
-            <button class="btn btn-sm btn-outline" id="toggle-key-btn">Show</button>
-            <button class="btn btn-sm btn-outline" id="test-key-btn">Test</button>
-          </div>
-          <p class="form-hint">Stored locally in your browser only. <a href="https://console.anthropic.com" target="_blank" rel="noopener noreferrer">Get a key →</a></p>
-        </div>
+    <div class="search-wrap">
+      <svg class="search-icon" width="14" height="14" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="8" cy="8" r="5"/><path d="M12 12l3 3"/>
+      </svg>
+      <input id="search-input" type="search" placeholder="Search notes…" />
+    </div>
 
-        <div class="form-group">
-          <label for="proxy-url-input">
-            Proxy URL
-            <span class="label-required">required for GitHub Pages</span>
-          </label>
-          <input type="url" id="proxy-url-input" placeholder="https://my-worker.workers.dev/v1/messages" autocomplete="off" spellcheck="false" />
-          <p class="form-hint">
-            Anthropic blocks browser CORS requests, so requests must be routed through a proxy you control.
-            <a href="#" id="show-proxy-help">How to set one up in 2 minutes →</a>
-          </p>
-        </div>
-        <div class="form-group">
-          <label for="model-select">Model</label>
-          <select id="model-select">
-            <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 — Fast &amp; affordable</option>
-            <option value="claude-sonnet-4-6" selected>Claude Sonnet 4.6 — Recommended</option>
-            <option value="claude-opus-4-6">Claude Opus 4.6 — Best quality</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label>Theme</label>
-          <div class="toggle-group">
-            <button class="toggle-btn" data-theme-btn="light">Light</button>
-            <button class="toggle-btn" data-theme-btn="dark">Dark</button>
+    <nav class="sidebar-nav">
+      <button class="nav-item active" data-view="notes">
+        <svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor">
+          <path d="M4 3h12a1 1 0 011 1v12a1 1 0 01-1 1H4a1 1 0 01-1-1V4a1 1 0 011-1zm2 3v2h8V6H6zm0 4v2h8v-2H6zm0 4v2h5v-2H6z"/>
+        </svg>
+        Notes
+      </button>
+      <button class="nav-item" data-view="map">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+          <circle cx="5" cy="12" r="3"/><circle cx="19" cy="6" r="3"/><circle cx="19" cy="18" r="3"/>
+          <line x1="7.8" y1="10.8" x2="16.2" y2="7.2"/><line x1="7.8" y1="13.2" x2="16.2" y2="16.8"/>
+        </svg>
+        Mind Map
+      </button>
+    </nav>
+
+    <div class="sidebar-spacer"></div>
+
+    <!-- Notes list (desktop sidebar) -->
+    <div id="notes-list" class="notes-list"></div>
+
+    <div class="sidebar-footer">
+      <button class="btn-outline btn-sm" id="profile-btn">
+        <svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor">
+          <path d="M10 10a4 4 0 100-8 4 4 0 000 8zm0 2c-5 0-8 2-8 3v1h16v-1c0-1-3-3-8-3z"/>
+        </svg>
+        Profile &amp; Settings
+      </button>
+    </div>
+  </aside>
+
+  <!-- ── Main content ── -->
+  <main id="main-content" class="main-content">
+
+    <!-- Notes view -->
+    <section id="view-notes" class="view active">
+      <div id="upload-zone" class="upload-zone" tabindex="0" role="button"
+           aria-label="Upload handwritten notes">
+        <div class="upload-zone-inner">
+          <div class="upload-icon">
+            <svg width="48" height="48" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5">
+              <rect x="6" y="6" width="36" height="36" rx="6" stroke-dasharray="4 3"/>
+              <path d="M24 18v12M18 24l6-6 6 6" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
           </div>
-        </div>
-        <div class="form-group">
-          <label>Data</label>
-          <div class="btn-row">
-            <button class="btn btn-outline" id="export-btn">Export JSON</button>
-            <label class="btn btn-outline" style="cursor:pointer">
-              Import JSON
-              <input type="file" id="import-file" accept=".json" class="hidden" />
+          <p class="upload-title">Upload Handwritten Notes</p>
+          <p class="upload-sub">Drag &amp; drop images or PDFs, or choose an option below</p>
+          <div class="upload-btns">
+            <label class="btn-primary upload-label">
+              <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M10 3l7 7h-4v7H7v-7H3l7-7z"/>
+              </svg>
+              Browse Files
+              <input id="file-input" type="file" accept="image/*,.pdf" multiple hidden />
+            </label>
+            <label class="btn-outline upload-label">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M9 3L7.17 5H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V7a2 2 0 00-2-2h-3.17L15 3H9zm3 4a5 5 0 110 10A5 5 0 0112 7z"/>
+              </svg>
+              Camera
+              <input id="camera-input" type="file" accept="image/*" capture="environment" hidden />
             </label>
           </div>
         </div>
-        <div class="form-group danger-zone">
-          <label>Danger Zone</label>
-          <button class="btn btn-danger" id="clear-all-btn">Clear All Data</button>
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-primary" id="save-settings-btn">Save Settings</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- ===================== NOTE DETAIL MODAL ===================== -->
-  <div id="note-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-label="Note Detail">
-    <div class="modal-box modal-box--wide">
-      <div class="modal-header">
-        <div class="note-header-left">
-          <div id="note-modal-title" class="note-modal-title" contenteditable="true" spellcheck="false" data-placeholder="Note title"></div>
-          <div class="note-meta-row">
-            <span id="note-modal-date" class="note-meta-date"></span>
-            <span id="note-modal-source" class="source-badge"></span>
-            <span id="note-processing-badge" class="processing-badge hidden"></span>
-          </div>
-        </div>
-        <div class="note-header-actions">
-          <button class="btn btn-sm btn-outline" id="note-reprocess-btn" title="Reprocess with AI">
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.63"/></svg>
-            Reprocess
-          </button>
-          <button class="btn btn-sm btn-outline" id="note-export-md-btn" title="Export as Markdown">
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            Export
-          </button>
-          <button class="btn btn-sm btn-danger-outline" id="note-delete-btn" title="Delete note">
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
-            Delete
-          </button>
-          <button class="icon-btn" id="close-note-modal" aria-label="Close">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-          </button>
-        </div>
       </div>
 
-      <div class="note-modal-body">
-        <!-- Left: original images -->
-        <div class="note-images-col">
-          <div class="col-label">Original</div>
-          <div id="note-images-container" class="note-images-scroll"></div>
-        </div>
-        <!-- Right: content tabs -->
-        <div class="note-content-col">
-          <div class="note-tabs">
-            <button class="tab-btn active" data-tab="organized">Organized</button>
-            <button class="tab-btn" data-tab="transcription">Transcription</button>
-            <button class="tab-btn" data-tab="summary">Summary</button>
-          </div>
-          <div id="tab-organized" class="tab-panel active markdown-body" id="note-organized"></div>
-          <div id="tab-transcription" class="tab-panel hidden note-preformatted"></div>
-          <div id="tab-summary" class="tab-panel hidden note-summary-panel"></div>
-        </div>
-      </div>
+      <!-- Processing queue -->
+      <div id="queue" class="queue hidden"></div>
 
-      <div class="note-modal-footer">
-        <div class="footer-row">
-          <span class="footer-label">Tags</span>
-          <div id="note-tags-list" class="tags-row"></div>
-          <input type="text" id="note-tag-input" class="tag-input" placeholder="Add tag…" maxlength="30" />
-        </div>
-        <div class="footer-row" id="related-row">
-          <span class="footer-label">Related</span>
-          <div id="related-notes-list" class="related-row"></div>
-        </div>
-      </div>
-    </div>
-  </div>
+      <!-- Mobile notes list -->
+      <div id="notes-list-mobile" class="notes-list-mobile"></div>
+    </section>
 
-  <!-- ===================== APP SHELL ===================== -->
-  <div class="app-shell">
-    <!-- Sidebar -->
-    <aside class="sidebar">
-      <div class="sidebar-top">
-        <div class="logo">
-          <span class="logo-mark">🧠</span>
-          <span class="logo-text">PaperBrain</span>
-        </div>
-        <button class="icon-btn icon-btn--muted" id="settings-btn" aria-label="Settings" title="Settings">
-          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    <!-- Mind map view -->
+    <section id="view-map" class="view hidden">
+      <div class="map-toolbar">
+        <button class="btn-sm btn-outline" id="map-reset">Reset Layout</button>
+        <button class="btn-sm btn-outline" id="map-tag-links">Tag Links</button>
+        <input type="search" id="map-filter" placeholder="Filter by tag…" class="map-filter-input" />
+      </div>
+      <svg id="mindmap-svg" class="mindmap-svg"></svg>
+    </section>
+
+  </main>
+
+  <!-- ── Bottom nav (mobile only) ── -->
+  <nav class="bottom-nav">
+    <button class="bottom-nav-item active" data-view="notes">
+      <svg width="22" height="22" viewBox="0 0 20 20" fill="currentColor">
+        <path d="M4 3h12a1 1 0 011 1v12a1 1 0 01-1 1H4a1 1 0 01-1-1V4a1 1 0 011-1z"/>
+      </svg>
+      <span>Notes</span>
+    </button>
+    <button class="bottom-nav-item bottom-nav-camera" id="camera-nav-btn">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M9 3L7.17 5H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V7a2 2 0 00-2-2h-3.17L15 3H9zm3 4a5 5 0 110 10A5 5 0 0112 7z"/>
+      </svg>
+      <span>Camera</span>
+    </button>
+    <button class="bottom-nav-item" data-view="map">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+        <circle cx="5" cy="12" r="3"/><circle cx="19" cy="6" r="3"/><circle cx="19" cy="18" r="3"/>
+        <line x1="7.8" y1="10.8" x2="16.2" y2="7.2"/><line x1="7.8" y1="13.2" x2="16.2" y2="16.8"/>
+      </svg>
+      <span>Map</span>
+    </button>
+    <button class="bottom-nav-item" id="profile-nav-btn">
+      <svg width="22" height="22" viewBox="0 0 20 20" fill="currentColor">
+        <path d="M10 10a4 4 0 100-8 4 4 0 000 8zm0 2c-5 0-8 2-8 3v1h16v-1c0-1-3-3-8-3z"/>
+      </svg>
+      <span>Profile</span>
+    </button>
+  </nav>
+
+</div><!-- /#app -->
+
+
+<!-- ══════════════════════════════════════════════════
+     NOTE DETAIL MODAL
+════════════════════════════════════════════════════ -->
+<div id="note-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="note-title">
+  <div class="modal-backdrop"></div>
+  <div class="modal-panel note-panel">
+
+    <header class="modal-header">
+      <div class="note-title-wrap">
+        <h2 id="note-title" class="note-title" contenteditable="false" spellcheck="true"></h2>
+        <button class="icon-btn" id="edit-title-btn" title="Edit title">
+          <svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor">
+            <path d="M13.586 3.586a2 2 0 112.828 2.828L7.07 15.757l-3.535.707.707-3.535L13.586 3.586z"/>
+          </svg>
         </button>
       </div>
-
-      <div class="search-wrap">
-        <div class="search-box">
-          <svg class="search-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input type="search" id="search-input" placeholder="Search notes…" aria-label="Search notes" autocomplete="off" />
-          <button class="search-clear hidden" id="search-clear" aria-label="Clear search">
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-          </button>
-        </div>
+      <div class="modal-header-actions">
+        <button class="btn-sm btn-outline" id="edit-mode-btn">Edit</button>
+        <button class="btn-sm btn-outline" id="reprocess-btn">Re-process</button>
+        <button class="btn-sm btn-danger"  id="delete-note-btn">Delete</button>
+        <button class="icon-btn modal-close" id="note-modal-close" aria-label="Close">✕</button>
       </div>
+    </header>
 
-      <div class="notes-list-header">
-        <span id="notes-count" class="notes-count">0 notes</span>
-        <button class="new-note-btn" id="new-upload-btn" title="Upload notes">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    <div class="note-body">
+      <!-- Left col: images + annotations -->
+      <div class="note-images-col" id="note-images-col">
+        <div id="note-images-wrap" class="note-images-wrap"></div>
+
+        <!-- Annotation toolbar -->
+        <div id="annotate-toolbar" class="annotate-toolbar hidden">
+          <div class="annotate-tools">
+            <button class="tool-btn active" data-tool="rect"     title="Rectangle">▭</button>
+            <button class="tool-btn"        data-tool="ellipse"  title="Ellipse">◯</button>
+            <button class="tool-btn"        data-tool="freehand" title="Freehand">✏</button>
+          </div>
+          <select id="annotate-tag-select" class="annotate-tag-select">
+            <option value="">— pick tag —</option>
+          </select>
+          <input id="annotate-tag-new" class="annotate-tag-input" placeholder="New tag…" />
+          <button class="btn-sm btn-danger"  id="annotate-delete-btn"     disabled>Delete</button>
+          <button class="btn-sm btn-outline" id="annotate-reprocess-btn"  disabled>Re-process region</button>
+          <button class="btn-sm btn-outline" id="annotate-done-btn">Done</button>
+        </div>
+
+        <button class="btn-sm btn-outline annotate-toggle" id="annotate-toggle-btn">
+          <svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor">
+            <path d="M13.586 3.586a2 2 0 112.828 2.828L7.07 15.757l-3.535.707.707-3.535L13.586 3.586z"/>
+          </svg>
+          Annotate
         </button>
-      </div>
 
-      <div id="notes-list" class="notes-list" role="list">
-        <!-- Note cards rendered here -->
-      </div>
-    </aside>
-
-    <!-- Main content area -->
-    <main class="main-content">
-      <!-- Upload Zone -->
-      <div id="upload-zone" class="upload-zone">
-        <div class="drop-target" id="drop-target">
-          <div class="upload-illustration">
-            <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="upload-svg"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-          </div>
-          <h2 class="upload-title">Upload Handwritten Notes</h2>
-          <p class="upload-subtitle">Drag &amp; drop photos or PDFs here</p>
-          <div class="upload-btn-row">
-            <button class="btn btn-primary btn-lg" id="upload-btn">
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-              Choose Files
-            </button>
-            <button class="btn btn-outline btn-lg" id="camera-btn">
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-              Camera
-            </button>
-          </div>
-          <p class="upload-hint">JPG · PNG · HEIC · WebP · PDF</p>
-          <input type="file" id="file-input" accept="image/*,.pdf" multiple class="hidden" />
-          <input type="file" id="camera-input" accept="image/*" capture="environment" class="hidden" />
+        <!-- Related notes -->
+        <div id="relations-wrap" class="relations-wrap">
+          <p class="relations-label">Related Notes</p>
+          <div id="relations-list" class="relations-list"></div>
         </div>
       </div>
 
-      <!-- Processing Queue -->
-      <div id="processing-queue" class="processing-queue hidden">
-        <div class="processing-header">
-          <span class="processing-title">Processing</span>
-          <span id="processing-status" class="processing-status"></span>
+      <!-- Right col: tabs + content -->
+      <div class="note-content-col">
+        <div class="note-tabs">
+          <button class="tab-btn active" data-tab="organized">Organized</button>
+          <button class="tab-btn"        data-tab="transcription">Transcription</button>
+          <button class="tab-btn"        data-tab="summary">Summary</button>
         </div>
-        <div id="queue-items" class="queue-items"></div>
-      </div>
 
-      <!-- Empty state (when notes exist but none selected) -->
-      <div id="empty-state" class="empty-state hidden">
-        <div class="empty-icon">🧠</div>
-        <h3>Select a note</h3>
-        <p>Choose a note from the sidebar or upload new ones</p>
-        <button class="btn btn-primary" id="empty-upload-btn">Upload Notes</button>
+        <div id="tab-organized"    class="tab-panel active">
+          <div     id="organized-view"  class="markdown-body"></div>
+          <textarea id="organized-edit" class="edit-textarea hidden" rows="20"></textarea>
+        </div>
+        <div id="tab-transcription" class="tab-panel hidden">
+          <div      id="transcription-view"  class="markdown-body mono"></div>
+          <textarea id="transcription-edit"  class="edit-textarea hidden" rows="20"></textarea>
+        </div>
+        <div id="tab-summary" class="tab-panel hidden">
+          <div id="summary-view"    class="markdown-body"></div>
+          <div id="key-points-view" class="key-points"></div>
+        </div>
+
+        <!-- Edit actions -->
+        <div id="edit-actions" class="edit-actions hidden">
+          <button class="btn-primary" id="save-edit-btn">Save Changes</button>
+          <button class="btn-outline" id="cancel-edit-btn">Cancel</button>
+        </div>
+
+        <!-- Tags -->
+        <div class="note-tags-wrap">
+          <div id="note-tags" class="note-tags"></div>
+          <div class="add-tag-row">
+            <input id="tag-input" type="text" placeholder="Add tag…" />
+            <button id="tag-add-btn" class="btn-sm btn-outline">+</button>
+          </div>
+        </div>
       </div>
-    </main>
+    </div>
+
+    <footer class="modal-footer">
+      <button class="btn-sm btn-outline" id="export-md-btn">Export Markdown</button>
+      <span id="note-meta" class="note-meta"></span>
+    </footer>
   </div>
 </div>
 
-<!-- Toast container -->
-<div id="toast-container" class="toast-container" role="status" aria-live="polite"></div>
 
-<!-- Confirm dialog -->
-<div id="confirm-overlay" class="modal-overlay hidden">
-  <div class="confirm-box">
-    <h3 id="confirm-title">Are you sure?</h3>
-    <p id="confirm-message"></p>
+<!-- ══════════════════════════════════════════════════
+     PROFILE / SETTINGS MODAL
+════════════════════════════════════════════════════ -->
+<div id="profile-modal" class="modal hidden" role="dialog" aria-modal="true">
+  <div class="modal-backdrop"></div>
+  <div class="modal-panel profile-panel">
+    <header class="modal-header">
+      <h2>Profile &amp; Settings</h2>
+      <button class="icon-btn modal-close" id="profile-modal-close" aria-label="Close">✕</button>
+    </header>
+    <div class="profile-body">
+      <section class="profile-section">
+        <h3>Account</h3>
+        <p id="profile-email" class="profile-email"></p>
+        <label>
+          Display Name
+          <input type="text" id="profile-name" placeholder="Your name" />
+        </label>
+      </section>
+
+      <section class="profile-section">
+        <h3>AI Model</h3>
+        <select id="model-select">
+          <option value="claude-sonnet-4-6">Claude Sonnet 4.6 (recommended)</option>
+          <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 (fast)</option>
+          <option value="claude-opus-4-6">Claude Opus 4.6 (most capable)</option>
+        </select>
+      </section>
+
+      <section class="profile-section">
+        <h3>Appearance</h3>
+        <div class="toggle-row">
+          <span>Dark Mode</span>
+          <label class="toggle">
+            <input type="checkbox" id="theme-toggle" checked />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </section>
+
+      <section class="profile-section">
+        <h3>Data</h3>
+        <button class="btn-outline btn-sm" id="export-all-btn">Export All Notes (JSON)</button>
+      </section>
+
+      <section class="profile-section">
+        <h3>Sign Out</h3>
+        <button class="btn-danger btn-sm" id="signout-btn">Sign Out</button>
+      </section>
+
+      <div class="profile-save-row">
+        <button class="btn-primary" id="save-profile-btn">Save Changes</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════
+     CLARIFICATION POPUP
+════════════════════════════════════════════════════ -->
+<div id="clarify-modal" class="modal hidden" role="dialog" aria-modal="true">
+  <div class="modal-backdrop"></div>
+  <div class="modal-panel clarify-panel">
+    <header class="modal-header">
+      <h2>Help the AI Learn Your Handwriting</h2>
+      <button class="icon-btn modal-close" id="clarify-close" aria-label="Close">✕</button>
+    </header>
+    <p class="clarify-intro">
+      The AI couldn't read some words. Type what each word says so we can improve future transcriptions.
+    </p>
+    <div id="clarify-items" class="clarify-items"></div>
+    <div class="clarify-actions">
+      <button class="btn-primary" id="clarify-submit">Submit &amp; Learn</button>
+      <button class="btn-outline" id="clarify-skip">Skip</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════
+     LIGHTBOX
+════════════════════════════════════════════════════ -->
+<div id="lightbox" class="lightbox hidden">
+  <button class="lightbox-close" id="lightbox-close" aria-label="Close">✕</button>
+  <img id="lightbox-img" src="" alt="Full size note image" />
+</div>
+
+
+<!-- ══════════════════════════════════════════════════
+     CONFIRM DIALOG
+════════════════════════════════════════════════════ -->
+<div id="confirm-dialog" class="modal hidden" role="alertdialog" aria-modal="true">
+  <div class="modal-backdrop"></div>
+  <div class="modal-panel confirm-panel">
+    <p id="confirm-msg" class="confirm-msg"></p>
     <div class="confirm-actions">
-      <button class="btn btn-outline" id="confirm-cancel">Cancel</button>
-      <button class="btn btn-danger" id="confirm-ok">Confirm</button>
+      <button class="btn-danger"  id="confirm-ok">Delete</button>
+      <button class="btn-outline" id="confirm-cancel">Cancel</button>
     </div>
   </div>
 </div>
 
+
+<!-- ══════════════════════════════════════════════════
+     TOAST
+════════════════════════════════════════════════════ -->
+<div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+
+<!-- Scripts -->
+<script src="config.js"></script>
 <script type="module" src="js/app.js"></script>
+
 </body>
 </html>

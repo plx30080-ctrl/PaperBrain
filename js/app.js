@@ -1,964 +1,884 @@
-/* ============================================================
-   app.js – PaperBrain main application
-   ============================================================ */
+/**
+ * app.js — PaperBrain main application
+ *
+ * Coordinates: Auth → DB → API → UI
+ */
 
-import * as DB  from './db.js';
-import * as API from './api.js';
-import { CorsOrNetworkError } from './api.js';
+import * as Auth from "./auth.js";
+import * as DB   from "./db.js";
+import * as API  from "./api.js";
+import { AnnotationEngine } from "./annotate.js";
+import { MindMap }          from "./mindmap.js";
 
-/* ── state ──────────────────────────────────────────────────── */
-
-const state = {
-  notes:        [],
-  currentNoteId: null,
-  searchQuery:  '',
-  settings: {
-    apiKey: '',
-    model:  'claude-sonnet-4-6',
-    theme:  'light',
-  },
-  processing: [],  // [{ id, name, status, progress, done, error }]
-};
-
-/* ── DOM refs ───────────────────────────────────────────────── */
-
-const $ = (sel, root = document) => root.querySelector(sel);
-
-const el = {
-  // Sidebar
-  notesList:          $('#notes-list'),
-  notesCount:         $('#notes-count'),
-  searchInput:        $('#search-input'),
-  searchClear:        $('#search-clear'),
-  newUploadBtn:       $('#new-upload-btn'),
-
-  // Main
-  uploadZone:         $('#upload-zone'),
-  dropTarget:         $('#drop-target'),
-  uploadBtn:          $('#upload-btn'),
-  cameraBtn:          $('#camera-btn'),
-  fileInput:          $('#file-input'),
-  cameraInput:        $('#camera-input'),
-  processingQueue:    $('#processing-queue'),
-  processingStatus:   $('#processing-status'),
-  queueItems:         $('#queue-items'),
-  emptyState:         $('#empty-state'),
-  emptyUploadBtn:     $('#empty-upload-btn'),
-
-  // Settings modal
-  settingsModal:      $('#settings-modal'),
-  settingsBtn:        $('#settings-btn'),
-  closeSettings:      $('#close-settings'),
-  apiKeyInput:        $('#api-key-input'),
-  toggleKeyBtn:       $('#toggle-key-btn'),
-  testKeyBtn:         $('#test-key-btn'),
-  proxyUrlInput:      $('#proxy-url-input'),
-  showProxyHelp:      $('#show-proxy-help'),
-  corsBanner:         $('#cors-banner'),
-  modelSelect:        $('#model-select'),
-  saveSettingsBtn:    $('#save-settings-btn'),
-  exportBtn:          $('#export-btn'),
-  importFile:         $('#import-file'),
-  clearAllBtn:        $('#clear-all-btn'),
-
-  // Note modal
-  noteModal:              $('#note-modal'),
-  closeNoteModal:         $('#close-note-modal'),
-  noteModalTitle:         $('#note-modal-title'),
-  noteModalDate:          $('#note-modal-date'),
-  noteModalSource:        $('#note-modal-source'),
-  noteProcessBadge:       $('#note-processing-badge'),
-  noteReprocessBtn:       $('#note-reprocess-btn'),
-  noteExportMdBtn:        $('#note-export-md-btn'),
-  noteDeleteBtn:          $('#note-delete-btn'),
-  noteImagesContainer:    $('#note-images-container'),
-  tabOrganized:           $('#tab-organized'),
-  tabTranscription:       $('#tab-transcription'),
-  tabSummary:             $('#tab-summary'),
-  noteTagsList:           $('#note-tags-list'),
-  noteTagInput:           $('#note-tag-input'),
-  relatedRow:             $('#related-row'),
-  relatedNotesList:       $('#related-notes-list'),
-
-  // Confirm dialog
-  confirmOverlay:  $('#confirm-overlay'),
-  confirmTitle:    $('#confirm-title'),
-  confirmMessage:  $('#confirm-message'),
-  confirmOk:       $('#confirm-ok'),
-  confirmCancel:   $('#confirm-cancel'),
-
-  // Toast
-  toastContainer:  $('#toast-container'),
-};
-
-/* ── utils ──────────────────────────────────────────────────── */
-
-function uuid() {
-  return (crypto.randomUUID?.() ?? (Date.now().toString(36) + Math.random().toString(36).slice(2)));
+// ── PDF.js worker ─────────────────────────────────────────────
+if (window.pdfjsLib) {
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 }
+
+// ── State ─────────────────────────────────────────────────────
+const state = {
+  notes:            [],
+  currentNote:      null,
+  currentImageUrls: [],
+  editMode:         false,
+  editOriginals:    {},
+  annotateEngine:   null,
+  currentAnnotateIdx: 0,
+  mindmap:          null,
+  authMode:         "signin",
+};
+
+// ── DOM helpers ───────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+
+const authScreen      = $("auth-screen");
+const app             = $("app");
+const authForm        = $("auth-form");
+const authEmail       = $("auth-email");
+const authPassword    = $("auth-password");
+const authSubmit      = $("auth-submit");
+const authError       = $("auth-error");
+const authSwitchLink  = $("auth-switch-link");
+
+const sidebar         = $("sidebar");
+const sidebarOverlay  = $("sidebar-overlay");
+const sidebarToggle   = $("sidebar-toggle");
+const sidebarClose    = $("sidebar-close");
+const searchInput     = $("search-input");
+const searchToggleBtn = $("search-toggle-btn");
+
+const notesList       = $("notes-list");
+const notesListMobile = $("notes-list-mobile");
+
+const viewNotes       = $("view-notes");
+const viewMap         = $("view-map");
+
+const fileInput       = $("file-input");
+const cameraInput     = $("camera-input");
+const uploadZone      = $("upload-zone");
+const queue           = $("queue");
+const cameraNavBtn    = $("camera-nav-btn");
+
+const noteModal       = $("note-modal");
+const noteTitle       = $("note-title");
+const editTitleBtn    = $("edit-title-btn");
+const editModeBtn     = $("edit-mode-btn");
+const reprocessBtn    = $("reprocess-btn");
+const deleteNoteBtn   = $("delete-note-btn");
+const noteModalClose  = $("note-modal-close");
+const noteImagesWrap  = $("note-images-wrap");
+const noteTagsEl      = $("note-tags");
+const tagInput        = $("tag-input");
+const tagAddBtn       = $("tag-add-btn");
+const organizedView   = $("organized-view");
+const organizedEdit   = $("organized-edit");
+const transcriptionView = $("transcription-view");
+const transcriptionEdit = $("transcription-edit");
+const summaryView     = $("summary-view");
+const keyPointsView   = $("key-points-view");
+const editActions     = $("edit-actions");
+const saveEditBtn     = $("save-edit-btn");
+const cancelEditBtn   = $("cancel-edit-btn");
+const relationsListEl = $("relations-list");
+const exportMdBtn     = $("export-md-btn");
+const noteMetaEl      = $("note-meta");
+
+const annotateToggleBtn    = $("annotate-toggle-btn");
+const annotateToolbar      = $("annotate-toolbar");
+const annotateTagSelect    = $("annotate-tag-select");
+const annotateTagNew       = $("annotate-tag-new");
+const annotateDeleteBtn    = $("annotate-delete-btn");
+const annotateReprocessBtn = $("annotate-reprocess-btn");
+const annotateDoneBtn      = $("annotate-done-btn");
+
+const profileModal      = $("profile-modal");
+const profileModalClose = $("profile-modal-close");
+const profileBtn        = $("profile-btn");
+const profileNavBtn     = $("profile-nav-btn");
+const profileEmail      = $("profile-email");
+const profileNameInput  = $("profile-name");
+const modelSelect       = $("model-select");
+const themeToggle       = $("theme-toggle");
+const signoutBtn        = $("signout-btn");
+const saveProfileBtn    = $("save-profile-btn");
+const exportAllBtn      = $("export-all-btn");
+
+const clarifyModal  = $("clarify-modal");
+const clarifyClose  = $("clarify-close");
+const clarifyItems  = $("clarify-items");
+const clarifySubmit = $("clarify-submit");
+const clarifySkip   = $("clarify-skip");
+
+const lightbox      = $("lightbox");
+const lightboxImg   = $("lightbox-img");
+const lightboxClose = $("lightbox-close");
+
+const confirmDialog = $("confirm-dialog");
+const confirmMsg    = $("confirm-msg");
+const confirmOk     = $("confirm-ok");
+const confirmCancel = $("confirm-cancel");
+const toastContainer = $("toast-container");
+
+const mapResetBtn   = $("map-reset");
+const mapTagLinksBtn = $("map-tag-links");
+const mapFilter     = $("map-filter");
+
+// ── Utilities ─────────────────────────────────────────────────
+
+function uuid() { return crypto.randomUUID(); }
 
 function escHtml(str) {
-  if (str == null) return '';
-  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  return String(str ?? "")
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 }
 
-function fmtDate(ts) {
-  if (!ts) return '';
-  return new Date(ts).toLocaleDateString(undefined, { month:'short', day:'numeric', year:'numeric' });
+function fmtDate(iso) {
+  return new Date(iso).toLocaleDateString(undefined, { year:"numeric", month:"short", day:"numeric" });
 }
 
-function fmtDateShort(ts) {
-  if (!ts) return '';
-  const d   = new Date(ts);
-  const now = new Date();
-  if (d.toDateString() === now.toDateString())
-    return d.toLocaleTimeString(undefined, { hour:'numeric', minute:'2-digit' });
-  return d.toLocaleDateString(undefined, { month:'short', day:'numeric' });
+function toast(msg, type = "info", duration = 3500) {
+  const el = document.createElement("div");
+  el.className = `toast toast-${type}`;
+  el.textContent = msg;
+  toastContainer.appendChild(el);
+  setTimeout(() => el.remove(), duration);
 }
 
-/* ── toast ──────────────────────────────────────────────────── */
-
-function toast(msg, type = 'info', duration = 3500) {
-  const icons = { success:'✅', error:'❌', warning:'⚠️', info:'ℹ️' };
-  const t = document.createElement('div');
-  t.className = `toast toast--${type}`;
-  t.innerHTML = `<span class="toast-icon">${icons[type] ?? 'ℹ️'}</span><span class="toast-msg">${escHtml(msg)}</span>`;
-  el.toastContainer.appendChild(t);
-  setTimeout(() => { t.classList.add('fade-out'); setTimeout(() => t.remove(), 220); }, duration);
-}
-
-/* ── confirm dialog ─────────────────────────────────────────── */
-
-function confirm(title, message) {
-  return new Promise(resolve => {
-    el.confirmTitle.textContent   = title;
-    el.confirmMessage.textContent = message;
-    el.confirmOverlay.classList.remove('hidden');
-
-    function cleanup(result) {
-      el.confirmOverlay.classList.add('hidden');
-      el.confirmOk.removeEventListener('click', onOk);
-      el.confirmCancel.removeEventListener('click', onCancel);
-      resolve(result);
+function confirm(msg) {
+  return new Promise((resolve) => {
+    confirmMsg.textContent = msg;
+    confirmDialog.classList.remove("hidden");
+    function ok()  { cleanup(); resolve(true);  }
+    function no()  { cleanup(); resolve(false); }
+    function cleanup() {
+      confirmDialog.classList.add("hidden");
+      confirmOk.removeEventListener("click", ok);
+      confirmCancel.removeEventListener("click", no);
     }
-    const onOk     = () => cleanup(true);
-    const onCancel = () => cleanup(false);
-    el.confirmOk.addEventListener('click', onOk);
-    el.confirmCancel.addEventListener('click', onCancel);
+    confirmOk.addEventListener("click", ok);
+    confirmCancel.addEventListener("click", no);
   });
 }
 
-/* ── CORS help dialog ────────────────────────────────────────── */
+function renderMarkdown(text) {
+  return typeof marked !== "undefined" ? marked.parse(text ?? "") : `<pre>${escHtml(text)}</pre>`;
+}
 
-const WORKER_TEMPLATE = `// Cloudflare Worker – paste this at dash.cloudflare.com → Workers
-export default {
-  async fetch(request) {
-    const url = new URL(request.url);
-    if (request.method === 'OPTIONS') {
-      return new Response(null, { headers: corsHeaders() });
-    }
-    const upstream = await fetch('https://api.anthropic.com' + url.pathname, {
-      method:  request.method,
-      headers: request.headers,
-      body:    request.body,
-    });
-    const body = await upstream.arrayBuffer();
-    const res  = new Response(body, upstream);
-    Object.entries(corsHeaders()).forEach(([k, v]) => res.headers.set(k, v));
-    return res;
-  },
-};
-function corsHeaders() {
-  return {
-    'Access-Control-Allow-Origin':  '*',
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'Access-Control-Allow-Headers': '*',
-  };
-}`;
+// ── Auth ──────────────────────────────────────────────────────
 
-function showCorsHelp() {
-  // Remove existing dialog if any
-  document.getElementById('cors-help-box')?.remove();
+function showAuth() {
+  authScreen.classList.remove("hidden");
+  app.classList.add("hidden");
+}
 
-  const box = document.createElement('div');
-  box.id        = 'cors-help-box';
-  box.className = 'modal-overlay';
-  box.innerHTML = `
-    <div class="modal-box" style="max-width:560px">
-      <div class="modal-header">
-        <h2>CORS — Browser API restriction</h2>
-        <button class="icon-btn" id="close-cors-help" aria-label="Close">
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
-               stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-          </svg>
-        </button>
-      </div>
-      <div class="modal-body" style="display:flex;flex-direction:column;gap:14px">
-        <p style="font-size:14px;color:var(--text-2)">
-          Anthropic's API blocked the request from this origin. This happens when testing from a
-          <strong>Codespace preview URL</strong>. It won't affect the deployed GitHub Pages site.
-        </p>
+function showApp() {
+  authScreen.classList.add("hidden");
+  app.classList.remove("hidden");
+  loadNotes();
+}
 
-        <div style="background:var(--primary-light);border:1px solid var(--primary-border);border-radius:var(--r);padding:12px 14px">
-          <strong style="font-size:13px;color:var(--primary)">Option 1 — Deploy to GitHub Pages (recommended)</strong>
-          <p style="font-size:13px;color:var(--text-2);margin-top:4px">
-            Push to GitHub, enable Pages in repo Settings → Pages. The deployed site at
-            <code>yourusername.github.io/PaperBrain</code> will work without a proxy.
-          </p>
-        </div>
-
-        <div style="background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r);padding:12px 14px">
-          <strong style="font-size:13px">Option 2 — Cloudflare Worker proxy (free, 2 minutes)</strong>
-          <ol style="font-size:13px;color:var(--text-2);margin-top:6px;padding-left:18px;display:flex;flex-direction:column;gap:4px">
-            <li>Go to <a href="https://dash.cloudflare.com" target="_blank" rel="noopener">dash.cloudflare.com</a> → Workers &amp; Pages → Create</li>
-            <li>Click <strong>Quick edit</strong>, paste the script below, click <strong>Deploy</strong></li>
-            <li>Copy the <code>*.workers.dev</code> URL and paste it in the Proxy URL field below</li>
-          </ol>
-          <pre style="margin-top:10px;font-size:11px;background:var(--sb-bg);color:var(--sb-text);padding:10px;border-radius:6px;overflow-x:auto;white-space:pre">${escHtml(WORKER_TEMPLATE)}</pre>
-          <button class="btn btn-sm btn-outline" id="copy-worker-btn" style="margin-top:8px">Copy script</button>
-        </div>
-
-        <div class="form-group" style="margin:0">
-          <label for="proxy-url-input" style="font-size:13px">Proxy URL <span style="color:var(--text-3);font-weight:400">(optional)</span></label>
-          <div class="input-row">
-            <input type="url" id="proxy-url-input" placeholder="https://my-worker.workers.dev/v1/messages"
-                   value="${escHtml(localStorage.getItem('pb_proxy') ?? '')}" style="font-size:13px" />
-            <button class="btn btn-sm btn-primary" id="save-proxy-btn">Save</button>
-            <button class="btn btn-sm btn-outline" id="clear-proxy-btn">Clear</button>
-          </div>
-          <p class="form-hint">Leave blank to call Anthropic directly (works on GitHub Pages).</p>
-        </div>
-      </div>
-    </div>`;
-
-  document.body.appendChild(box);
-
-  box.querySelector('#close-cors-help').addEventListener('click', () => box.remove());
-  box.addEventListener('click', e => { if (e.target === box) box.remove(); });
-
-  box.querySelector('#copy-worker-btn').addEventListener('click', () => {
-    navigator.clipboard.writeText(WORKER_TEMPLATE).then(() => toast('Worker script copied', 'success'));
+document.querySelectorAll(".auth-tab").forEach((tab) => {
+  tab.addEventListener("click", () => {
+    state.authMode = tab.dataset.tab;
+    document.querySelectorAll(".auth-tab").forEach((t) => t.classList.toggle("active", t === tab));
+    authSubmit.textContent = state.authMode === "signin" ? "Sign In" : "Sign Up";
+    authError.classList.add("hidden");
   });
+});
 
-  box.querySelector('#save-proxy-btn').addEventListener('click', () => {
-    const url = box.querySelector('#proxy-url-input').value.trim();
-    if (url) { localStorage.setItem('pb_proxy', url); toast('Proxy URL saved — try testing again', 'success'); }
-    box.remove();
-  });
+authSwitchLink?.addEventListener("click", (e) => {
+  e.preventDefault();
+  const other = state.authMode === "signin" ? "signup" : "signin";
+  document.querySelector(`.auth-tab[data-tab="${other}"]`)?.click();
+});
 
-  box.querySelector('#clear-proxy-btn').addEventListener('click', () => {
-    localStorage.removeItem('pb_proxy');
-    box.querySelector('#proxy-url-input').value = '';
-    toast('Proxy cleared', 'info');
-  });
-}
+authForm?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  authError.classList.add("hidden");
+  const email    = authEmail.value.trim();
+  const password = authPassword.value;
+  if (!email || !password) return;
 
-/* ── settings ───────────────────────────────────────────────── */
+  authSubmit.disabled = true;
+  authSubmit.textContent = state.authMode === "signin" ? "Signing in…" : "Creating account…";
 
-async function loadSettings() {
-  state.settings.apiKey = (await DB.getSetting('apiKey')) ?? '';
-  state.settings.model  = (await DB.getSetting('model'))  ?? 'claude-sonnet-4-6';
-  state.settings.theme  = (await DB.getSetting('theme'))  ?? 'light';
-  applyTheme(state.settings.theme);
-}
+  const fn = state.authMode === "signin" ? Auth.signIn : Auth.signUp;
+  const { user, error } = await fn(email, password);
 
-function applyTheme(theme) {
-  document.documentElement.setAttribute('data-theme', theme);
-  document.querySelectorAll('[data-theme-btn]').forEach(b =>
-    b.classList.toggle('active', b.dataset.themeBtn === theme)
-  );
-}
+  authSubmit.disabled = false;
+  authSubmit.textContent = state.authMode === "signin" ? "Sign In" : "Sign Up";
 
-function openSettingsModal() {
-  el.apiKeyInput.value  = state.settings.apiKey;
-  el.modelSelect.value  = state.settings.model;
-  el.proxyUrlInput.value = localStorage.getItem('pb_proxy') ?? '';
-  applyTheme(state.settings.theme);
-
-  // Show CORS banner if no proxy is configured (GitHub Pages always needs one)
-  const needsProxy = !localStorage.getItem('pb_proxy');
-  el.corsBanner.classList.toggle('hidden', !needsProxy);
-
-  el.settingsModal.classList.remove('hidden');
-  setTimeout(() => el.apiKeyInput.focus(), 60);
-}
-
-function closeSettingsModal() {
-  el.settingsModal.classList.add('hidden');
-}
-
-async function saveSettings() {
-  const apiKey   = el.apiKeyInput.value.trim();
-  const model    = el.modelSelect.value;
-  const theme    = document.documentElement.getAttribute('data-theme') ?? 'light';
-  const proxyUrl = el.proxyUrlInput.value.trim();
-
-  state.settings.apiKey = apiKey;
-  state.settings.model  = model;
-  state.settings.theme  = theme;
-
-  if (proxyUrl) {
-    localStorage.setItem('pb_proxy', proxyUrl);
-  } else {
-    localStorage.removeItem('pb_proxy');
+  if (error) {
+    authError.textContent = error;
+    authError.classList.remove("hidden");
+    return;
   }
+  if (state.authMode === "signup") {
+    authError.style.color = "var(--success)";
+    authError.textContent = "Account created! Check your email to confirm, then sign in.";
+    authError.classList.remove("hidden");
+    return;
+  }
+  if (user) showApp();
+});
 
-  await Promise.all([
-    DB.setSetting('apiKey', apiKey),
-    DB.setSetting('model',  model),
-    DB.setSetting('theme',  theme),
-  ]);
+// ── Sidebar ───────────────────────────────────────────────────
 
-  closeSettingsModal();
-  toast('Settings saved', 'success');
+function openSidebar()  { sidebar.classList.add("open"); sidebarOverlay.classList.add("open"); }
+function closeSidebar() { sidebar.classList.remove("open"); sidebarOverlay.classList.remove("open"); }
+
+sidebarToggle?.addEventListener("click", openSidebar);
+sidebarClose?.addEventListener("click", closeSidebar);
+sidebarOverlay?.addEventListener("click", closeSidebar);
+searchToggleBtn?.addEventListener("click", () => { openSidebar(); setTimeout(() => searchInput?.focus(), 200); });
+cameraNavBtn?.addEventListener("click", () => cameraInput?.click());
+
+// ── Navigation ────────────────────────────────────────────────
+
+function switchView(view) {
+  viewNotes.style.display = view === "notes" ? "flex" : "none";
+  viewMap.style.display   = view === "map"   ? "flex" : "none";
+  document.querySelectorAll("[data-view]").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.view === view);
+  });
+  if (view === "map") loadMindMap();
+  closeSidebar();
 }
 
-/* ── notes list ─────────────────────────────────────────────── */
+document.querySelectorAll("[data-view]").forEach((btn) => {
+  btn.addEventListener("click", () => switchView(btn.dataset.view));
+});
 
-async function loadNotes() {
-  state.notes = state.searchQuery
-    ? await DB.searchNotes(state.searchQuery)
-    : await DB.getAllNotes();
-  renderNotesList();
+// ── Profile modal ─────────────────────────────────────────────
+
+async function openProfileModal() {
+  profileEmail.textContent = Auth.getUser()?.email ?? "";
+  profileModal.classList.remove("hidden");
+  try {
+    const profile = await DB.getProfile();
+    profileNameInput.value = profile.display_name ?? "";
+    modelSelect.value = profile.model ?? "claude-sonnet-4-6";
+  } catch (_) {}
+}
+
+profileBtn?.addEventListener("click", openProfileModal);
+profileNavBtn?.addEventListener("click", openProfileModal);
+profileModalClose?.addEventListener("click", () => profileModal.classList.add("hidden"));
+profileModal?.querySelector(".modal-backdrop")?.addEventListener("click", () => profileModal.classList.add("hidden"));
+
+themeToggle?.addEventListener("change", () => {
+  const dark = themeToggle.checked;
+  document.body.className = dark ? "theme-dark" : "theme-light";
+  localStorage.setItem("pb_theme", dark ? "dark" : "light");
+});
+
+signoutBtn?.addEventListener("click", async () => {
+  await Auth.signOut();
+  profileModal.classList.add("hidden");
+  showAuth();
+});
+
+saveProfileBtn?.addEventListener("click", async () => {
+  try {
+    await DB.updateProfile({ display_name: profileNameInput.value.trim() || null, model: modelSelect.value });
+    toast("Settings saved", "success");
+    profileModal.classList.add("hidden");
+  } catch (err) {
+    toast("Save failed: " + err.message, "error");
+  }
+});
+
+exportAllBtn?.addEventListener("click", async () => {
+  const data = await DB.exportAll();
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: `paperbrain-${Date.now()}.json` });
+  a.click();
+});
+
+// ── Notes list ────────────────────────────────────────────────
+
+async function loadNotes(query) {
+  try {
+    state.notes = query ? await DB.searchNotes(query) : await DB.getAllNotes();
+    renderNotesList();
+  } catch (err) {
+    console.error(err);
+    toast("Failed to load notes", "error");
+  }
 }
 
 function renderNotesList() {
-  const { notes } = state;
-  el.notesCount.textContent = `${notes.length} note${notes.length !== 1 ? 's' : ''}`;
-
-  if (!notes.length) {
-    el.notesList.innerHTML = `<p style="padding:20px 14px;font-size:13px;color:var(--sb-text-2);text-align:center">
-      ${state.searchQuery ? 'No matching notes' : 'No notes yet'}
-    </p>`;
-    return;
-  }
-
-  el.notesList.innerHTML = '';
-  notes.forEach(note => el.notesList.appendChild(buildNoteCard(note)));
+  const html = state.notes.length
+    ? state.notes.map(noteCardHTML).join("")
+    : `<p style="padding:16px;color:var(--text-muted);font-size:14px;">No notes yet. Upload your first handwritten page!</p>`;
+  notesList.innerHTML = html;
+  notesListMobile.innerHTML = html;
+  document.querySelectorAll(".note-card").forEach((el) => {
+    el.addEventListener("click", () => openNote(el.dataset.id));
+  });
 }
 
-function buildNoteCard(note) {
-  const isProc = note.processingState && note.processingState !== 'done' && note.processingState !== 'error';
-  const div    = document.createElement('div');
-  div.className  = `note-card${note.id === state.currentNoteId ? ' active' : ''}`;
-  div.dataset.id = note.id;
-  div.setAttribute('role', 'listitem');
-
-  const tagsHtml = (note.tags ?? []).slice(0, 3)
-    .map(t => `<span class="note-card-tag">${escHtml(t)}</span>`).join('');
-
-  div.innerHTML = `
-    <div class="note-card-title">${escHtml(note.title ?? 'Untitled')}</div>
-    <div class="note-card-summary">${escHtml(note.summary ?? (isProc ? 'Processing…' : ''))}</div>
-    <div class="note-card-footer">
-      <div class="note-card-tags">${tagsHtml}</div>
-      <span class="note-card-date">${fmtDateShort(note.createdAt)}</span>
-    </div>
-    ${isProc ? `<div class="note-card-processing"><div class="spinner"></div>${escHtml(note.processingState)}</div>` : ''}
-  `;
-  div.addEventListener('click', () => openNote(note.id));
-  return div;
+function noteCardHTML(note) {
+  const tags = (note.tags ?? []).map((t) => `<span class="tag-chip">${escHtml(t)}</span>`).join("");
+  return `<div class="note-card" data-id="${note.id}">
+    <div class="note-card-title">${escHtml(note.title ?? "Untitled")}</div>
+    <div class="note-card-meta">${fmtDate(note.created_at)}</div>
+    <div class="note-card-summary">${escHtml(note.summary ?? "")}</div>
+    ${tags ? `<div class="note-card-tags">${tags}</div>` : ""}
+  </div>`;
 }
 
-/* ── note detail ────────────────────────────────────────────── */
+let _searchTimer;
+searchInput?.addEventListener("input", () => {
+  clearTimeout(_searchTimer);
+  _searchTimer = setTimeout(() => loadNotes(searchInput.value), 300);
+});
+
+// ── Open note modal ───────────────────────────────────────────
 
 async function openNote(id) {
-  const note = await DB.getNote(id);
-  if (!note) return;
+  try {
+    const note = await DB.getNote(id);
+    state.currentNote = note;
+    state.currentImageUrls = await DB.getNoteImageUrls(id);
+    state.editMode = false;
+    renderNoteModal(note);
+    noteModal.classList.remove("hidden");
+    loadRelations(id);
+  } catch (err) {
+    toast("Failed to load note: " + err.message, "error");
+  }
+}
 
-  state.currentNoteId = id;
+function renderNoteModal(note) {
+  noteTitle.textContent = note.title ?? "Untitled";
+  noteTitle.contentEditable = "false";
+  noteMetaEl.textContent = fmtDate(note.created_at);
 
-  // Highlight card in sidebar
-  document.querySelectorAll('.note-card').forEach(c =>
-    c.classList.toggle('active', c.dataset.id === id)
-  );
+  organizedView.innerHTML     = renderMarkdown(note.organized);
+  transcriptionView.innerHTML = `<pre>${escHtml(note.transcription)}</pre>`;
+  summaryView.innerHTML       = renderMarkdown(note.summary);
+  keyPointsView.innerHTML     = (note.key_points ?? [])
+    .map((p) => `<div class="key-point-item">${escHtml(p)}</div>`).join("");
 
-  // Populate header
-  el.noteModalTitle.textContent  = note.title ?? 'Untitled';
-  el.noteModalDate.textContent   = fmtDate(note.createdAt);
-  el.noteModalSource.textContent = note.sourceType === 'pdf' ? 'PDF' : 'Image';
-
-  const isProc = note.processingState && note.processingState !== 'done' && note.processingState !== 'error';
-  el.noteProcessBadge.classList.toggle('hidden', !isProc);
-  if (isProc)
-    el.noteProcessBadge.innerHTML = `<div class="spinner" style="width:10px;height:10px;border-width:1.5px"></div>&nbsp;${escHtml(note.processingState)}`;
-
-  // Images
-  el.noteImagesContainer.innerHTML = '';
-  (note.images ?? []).forEach((src, i) => {
-    const wrap = document.createElement('div');
-    wrap.className = 'note-image-item';
-    wrap.innerHTML = `
-      <img src="${escHtml(src)}" alt="Page ${i + 1}" loading="lazy" />
-      ${(note.images?.length ?? 0) > 1 ? `<div class="note-image-page">Page ${i + 1} / ${note.images.length}</div>` : ''}
-    `;
-    wrap.querySelector('img').addEventListener('click', () => openLightbox(src));
-    el.noteImagesContainer.appendChild(wrap);
-  });
-
-  // Tab content
-  el.tabOrganized.innerHTML       = note.organized
-    ? marked.parse(note.organized)
-    : '<p style="color:var(--text-3);font-style:italic">No organized content yet.</p>';
-  el.tabTranscription.textContent = note.transcription ?? '';
-  renderSummaryTab(note);
-  switchTab('organized');
-
-  // Tags & related
   renderTags(note.tags ?? []);
-  await renderRelatedNotes(note.id);
+  renderImages();
+  setEditMode(false);
+  switchTab("organized");
 
-  el.noteModal.classList.remove('hidden');
-  el.noteModal.querySelector('.modal-box').scrollTop = 0;
-  showMainView('note');
+  // Reset annotate
+  annotateToolbar.classList.add("hidden");
+  annotateToggleBtn.classList.remove("hidden");
+  destroyAnnotateEngine();
 }
 
-function renderSummaryTab(note) {
-  const kp = note.keyPoints ?? [];
-  el.tabSummary.innerHTML = `
-    <div class="summary-text">${escHtml(note.summary ?? 'No summary yet.')}</div>
-    ${kp.length ? `
-      <div class="key-points">
-        <div class="key-points-label">Key Points</div>
-        <ul>${kp.map(p => `<li>${escHtml(p)}</li>`).join('')}</ul>
-      </div>` : ''}
-  `;
+function renderImages() {
+  noteImagesWrap.innerHTML = "";
+  state.currentImageUrls.forEach((url, i) => {
+    const container = document.createElement("div");
+    container.className = "note-image-container";
+    container.dataset.idx = i;
+
+    const img = document.createElement("img");
+    img.src = url;
+    img.alt = `Page ${i + 1}`;
+    img.loading = "lazy";
+    img.addEventListener("click", () => {
+      if (annotateToolbar.classList.contains("hidden")) {
+        lightboxImg.src = url;
+        lightbox.classList.remove("hidden");
+      }
+    });
+
+    container.appendChild(img);
+    noteImagesWrap.appendChild(container);
+  });
 }
 
-function renderTags(tags) {
-  el.noteTagsList.innerHTML = tags.map(tag => `
-    <span class="tag-chip">
-      ${escHtml(tag)}
-      <button class="tag-chip-remove" data-tag="${escHtml(tag)}" aria-label="Remove tag">×</button>
-    </span>
-  `).join('');
-}
-
-async function renderRelatedNotes(noteId) {
-  const relations = await DB.getRelations(noteId);
-  el.relatedRow.classList.toggle('hidden', !relations.length);
-  if (!relations.length) return;
-
-  const chips = await Promise.all(relations.map(async rel => {
-    const otherId = rel.fromId === noteId ? rel.toId : rel.fromId;
-    const other   = await DB.getNote(otherId);
-    if (!other) return '';
-    const pct = Math.round((rel.score ?? 0) * 100);
-    return `<button class="related-chip" data-id="${escHtml(otherId)}" title="${escHtml(rel.reason ?? '')}">
-      ${escHtml(other.title ?? 'Untitled')}<span class="related-score">${pct}%</span>
-    </button>`;
-  }));
-
-  el.relatedNotesList.innerHTML = chips.join('');
-}
-
-function closeNoteModal() {
-  el.noteModal.classList.add('hidden');
-  state.currentNoteId = null;
-  document.querySelectorAll('.note-card').forEach(c => c.classList.remove('active'));
-  showMainView(state.notes.length ? 'empty' : 'upload');
-}
+// ── Tabs ──────────────────────────────────────────────────────
 
 function switchTab(name) {
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
-  [
-    ['organized',    el.tabOrganized],
-    ['transcription',el.tabTranscription],
-    ['summary',      el.tabSummary],
-  ].forEach(([n, p]) => p.classList.toggle('hidden', n !== name));
-}
-
-/* ── main view ───────────────────────────────────────────────── */
-
-function showMainView(view) {
-  // view: 'upload' | 'empty' | 'note'  (note = modal is open, show empty bg)
-  el.uploadZone.classList.toggle('hidden',  view !== 'upload');
-  el.emptyState.classList.toggle('hidden',  view !== 'empty' && view !== 'note');
-}
-
-/* ── lightbox ────────────────────────────────────────────────── */
-
-function openLightbox(src) {
-  const lb = document.createElement('div');
-  lb.className = 'lightbox';
-  lb.innerHTML = `<img src="${escHtml(src)}" alt="Full size" />`;
-  lb.addEventListener('click', () => lb.remove());
-  document.addEventListener('keydown', function esc(e) { if (e.key === 'Escape') { lb.remove(); document.removeEventListener('keydown', esc); } });
-  document.body.appendChild(lb);
-}
-
-/* ── file processing ─────────────────────────────────────────── */
-
-async function handleFiles(files) {
-  if (!state.settings.apiKey) {
-    toast('Add your Anthropic API key in Settings first', 'warning');
-    openSettingsModal();
-    return;
-  }
-
-  const valid = [...files].filter(f => {
-    const ok = f.type.startsWith('image/') || f.type === 'application/pdf';
-    if (!ok) toast(`Skipped "${f.name}" — unsupported type`, 'warning');
-    return ok;
+  document.querySelectorAll(".tab-btn").forEach((btn) => btn.classList.toggle("active", btn.dataset.tab === name));
+  document.querySelectorAll(".tab-panel").forEach((panel) => {
+    panel.classList.toggle("active", panel.id === `tab-${name}`);
+    panel.classList.toggle("hidden", panel.id !== `tab-${name}`);
   });
-  if (!valid.length) return;
-
-  const jobs = valid.map(f => ({ id: uuid(), file: f, name: f.name, status: 'Waiting…', progress: 0, done: false, error: false }));
-  state.processing.push(...jobs);
-  renderQueue();
-
-  for (const job of jobs) await processJob(job);
-
-  setTimeout(() => {
-    state.processing = state.processing.filter(j => j.error);
-    renderQueue();
-    if (!state.processing.length) el.processingQueue.classList.add('hidden');
-  }, 2500);
 }
 
-async function processJob(job) {
-  try {
-    updateJob(job, 'Reading file…', 10);
+document.querySelectorAll(".tab-btn").forEach((btn) => btn.addEventListener("click", () => switchTab(btn.dataset.tab)));
+noteModalClose?.addEventListener("click", () => noteModal.classList.add("hidden"));
+noteModal?.querySelector(".modal-backdrop")?.addEventListener("click", () => noteModal.classList.add("hidden"));
 
-    let dataUrls;
-    if (job.file.type === 'application/pdf') {
-      updateJob(job, 'Rendering PDF…', 20);
-      dataUrls = await renderPDF(job.file);
-    } else {
-      const raw = await API.fileToDataUrl(job.file);
-      dataUrls  = [await API.resizeImage(raw)];
-    }
+// ── Edit mode ─────────────────────────────────────────────────
 
-    updateJob(job, 'Transcribing with AI…', 45);
-    const result = await API.processNote(dataUrls, state.settings.apiKey, state.settings.model);
+function setEditMode(on) {
+  state.editMode = on;
+  editModeBtn.textContent = on ? "Viewing" : "Edit";
+  editActions.classList.toggle("hidden", !on);
+  organizedView.classList.toggle("hidden", on);
+  organizedEdit.classList.toggle("hidden", !on);
+  transcriptionView.classList.toggle("hidden", on);
+  transcriptionEdit.classList.toggle("hidden", !on);
 
-    updateJob(job, 'Saving…', 88);
-    const note = {
-      id:              uuid(),
-      createdAt:       Date.now(),
-      updatedAt:       Date.now(),
-      title:           result.title,
-      transcription:   result.transcription,
-      organized:       result.organized,
-      summary:         result.summary,
-      tags:            result.tags,
-      keyPoints:       result.keyPoints,
-      images:          dataUrls,
-      sourceType:      job.file.type === 'application/pdf' ? 'pdf' : 'image',
-      processingState: 'done',
+  if (on) {
+    state.editOriginals = {
+      organized:     state.currentNote.organized ?? "",
+      transcription: state.currentNote.transcription ?? "",
     };
+    organizedEdit.value     = state.currentNote.organized ?? "";
+    transcriptionEdit.value = state.currentNote.transcription ?? "";
+  }
+}
 
-    await DB.saveNote(note);
-    updateJob(job, 'Done ✓', 100, true, false);
-    toast(`"${note.title}" ready`, 'success');
+editModeBtn?.addEventListener("click", () => setEditMode(!state.editMode));
+cancelEditBtn?.addEventListener("click", () => setEditMode(false));
 
-    await loadNotes();
-    showMainView('empty');
+saveEditBtn?.addEventListener("click", async () => {
+  const note = state.currentNote;
+  const newOrg    = organizedEdit.value;
+  const newTrans  = transcriptionEdit.value;
+  const corrections = diffText(state.editOriginals.transcription, newTrans);
 
-    // Find relations in background — never block the UI
-    findAndSaveRelations(note).catch(() => {});
+  try {
+    const updated = await DB.saveNote(note.id, { organized: newOrg, transcription: newTrans });
+    state.currentNote = updated;
+    organizedView.innerHTML = renderMarkdown(newOrg);
+    transcriptionView.innerHTML = `<pre>${escHtml(newTrans)}</pre>`;
+    setEditMode(false);
+    toast("Saved", "success");
+    loadNotes();
 
+    if (corrections.length) {
+      API.learnHandwriting({ noteId: note.id, corrections })
+        .then((res) => { if (res.synthesized) toast("AI updated your handwriting profile", "success"); })
+        .catch(() => {});
+    }
   } catch (err) {
-    console.error('[processJob]', err);
-    updateJob(job, err.message, 0, false, true);
-    if (err instanceof CorsOrNetworkError) {
-      showCorsHelp();
-    } else {
-      toast(`Failed: "${job.name}" — ${err.message}`, 'error', 6000);
+    toast("Save failed: " + err.message, "error");
+  }
+});
+
+function diffText(original, edited) {
+  if (original === edited) return [];
+  const orig = original.split(/\s+/);
+  const edit = edited.split(/\s+/);
+  const corrections = [];
+  const len = Math.min(orig.length, edit.length);
+  for (let i = 0; i < len; i++) {
+    if (orig[i] !== edit[i] && orig[i] && edit[i]) {
+      corrections.push({
+        original:   orig[i].replace(/[^\w'-]/g, ""),
+        correction: edit[i].replace(/[^\w'-]/g, ""),
+      });
     }
   }
+  return corrections.slice(0, 20);
 }
 
-async function findAndSaveRelations(newNote) {
-  const all     = await DB.getAllNotes();
-  const others  = all.filter(n => n.id !== newNote.id && n.processingState === 'done');
-  if (!others.length) return;
+// ── Title editing ─────────────────────────────────────────────
 
-  const related = await API.findRelatedNotes(newNote, others, state.settings.apiKey, state.settings.model);
-  if (!related.length) return;
-
-  await DB.saveRelations(related.map(r => ({
-    id:        uuid(),
-    fromId:    newNote.id,
-    toId:      r.id,
-    score:     r.score,
-    reason:    r.reason,
-    createdAt: Date.now(),
-  })));
-
-  if (state.currentNoteId === newNote.id) await renderRelatedNotes(newNote.id);
-}
-
-/* ── PDF rendering ───────────────────────────────────────────── */
-
-async function renderPDF(file) {
-  if (typeof pdfjsLib === 'undefined')
-    throw new Error('PDF.js did not load. Please refresh the page.');
-
-  pdfjsLib.GlobalWorkerOptions.workerSrc =
-    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-
-  const pdf      = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
-  const dataUrls = [];
-
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const page   = await pdf.getPage(i);
-    const vp     = page.getViewport({ scale: 1.8 });
-    const canvas = document.createElement('canvas');
-    canvas.width  = vp.width;
-    canvas.height = vp.height;
-    await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
-    dataUrls.push(await API.resizeImage(canvas.toDataURL('image/jpeg', 0.85)));
+editTitleBtn?.addEventListener("click", () => {
+  const editing = noteTitle.contentEditable === "true";
+  if (editing) {
+    const newTitle = noteTitle.textContent.trim() || "Untitled";
+    DB.saveNote(state.currentNote.id, { title: newTitle })
+      .then(() => { state.currentNote.title = newTitle; loadNotes(); toast("Title updated", "success"); })
+      .catch((err) => toast(err.message, "error"));
+    noteTitle.contentEditable = "false";
+    editTitleBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor"><path d="M13.586 3.586a2 2 0 112.828 2.828L7.07 15.757l-3.535.707.707-3.535L13.586 3.586z"/></svg>`;
+  } else {
+    noteTitle.contentEditable = "true";
+    noteTitle.focus();
+    editTitleBtn.textContent = "✓";
   }
-  return dataUrls;
+});
+
+// ── Tags ──────────────────────────────────────────────────────
+
+function renderTags(tags) {
+  noteTagsEl.innerHTML = tags.map((t) =>
+    `<span class="tag-chip">${escHtml(t)}<span class="tag-remove" data-tag="${escHtml(t)}">×</span></span>`
+  ).join("");
+  noteTagsEl.querySelectorAll(".tag-remove").forEach((btn) =>
+    btn.addEventListener("click", () => removeTag(btn.dataset.tag))
+  );
 }
 
-/* ── queue UI ────────────────────────────────────────────────── */
-
-function updateJob(job, status, progress, done = false, error = false) {
-  job.status   = status;
-  job.progress = progress;
-  job.done     = done;
-  job.error    = error;
-  renderQueue();
-}
-
-function renderQueue() {
-  if (!state.processing.length) return;
-  el.processingQueue.classList.remove('hidden');
-
-  const done  = state.processing.filter(j => j.done).length;
-  el.processingStatus.textContent = `${done} / ${state.processing.length}`;
-
-  el.queueItems.innerHTML = state.processing.map(j => `
-    <div class="queue-item">
-      ${j.done  ? '<span style="color:var(--success);font-size:15px">✓</span>'
-      : j.error ? '<span style="color:var(--danger);font-size:15px">✕</span>'
-      :           '<div class="spinner"></div>'}
-      <div style="flex:1;min-width:0">
-        <div class="queue-item-name">${escHtml(j.name)}</div>
-        <div class="queue-progress"><div class="queue-progress-bar" style="width:${j.progress}%"></div></div>
-      </div>
-      <span class="queue-item-status${j.error?' error':j.done?' done':''}">${escHtml(j.status)}</span>
-    </div>
-  `).join('');
-}
-
-/* ── tags ────────────────────────────────────────────────────── */
-
-async function addTag(raw) {
-  const tag  = raw.toLowerCase().trim().replace(/[^a-z0-9-_]/g, '');
-  if (!tag || !state.currentNoteId) return;
-  const note = await DB.getNote(state.currentNoteId);
-  if (!note || (note.tags ?? []).includes(tag)) return;
-  note.tags      = [...(note.tags ?? []), tag];
-  note.updatedAt = Date.now();
-  await DB.saveNote(note);
-  renderTags(note.tags);
-  await loadNotes();
+async function addTag(tag) {
+  tag = tag.trim().toLowerCase().replace(/\s+/g, "-");
+  if (!tag || !state.currentNote) return;
+  const tags = [...new Set([...(state.currentNote.tags ?? []), tag])];
+  const updated = await DB.saveNote(state.currentNote.id, { tags });
+  state.currentNote = updated;
+  renderTags(updated.tags);
+  loadNotes();
 }
 
 async function removeTag(tag) {
-  if (!state.currentNoteId) return;
-  const note = await DB.getNote(state.currentNoteId);
-  if (!note) return;
-  note.tags      = (note.tags ?? []).filter(t => t !== tag);
-  note.updatedAt = Date.now();
-  await DB.saveNote(note);
-  renderTags(note.tags);
-  await loadNotes();
+  if (!state.currentNote) return;
+  const tags = (state.currentNote.tags ?? []).filter((t) => t !== tag);
+  const updated = await DB.saveNote(state.currentNote.id, { tags });
+  state.currentNote = updated;
+  renderTags(updated.tags);
+  loadNotes();
 }
 
-/* ── note actions ────────────────────────────────────────────── */
+tagAddBtn?.addEventListener("click", () => { addTag(tagInput.value); tagInput.value = ""; });
+tagInput?.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addTag(tagInput.value); tagInput.value = ""; } });
 
-async function reprocessCurrentNote() {
-  if (!state.currentNoteId) return;
-  const note = await DB.getNote(state.currentNoteId);
-  if (!note?.images?.length) { toast('No images to reprocess', 'warning'); return; }
+// ── Relations ─────────────────────────────────────────────────
 
-  const ok = await confirm('Reprocess note?', 'AI will re-analyse the original images and overwrite the current text.');
+async function loadRelations(noteId) {
+  try {
+    const rels = await DB.getRelations(noteId);
+    relationsListEl.innerHTML = rels.length
+      ? rels.map((r) => {
+          const otherId = r.from_id === noteId ? r.to_id : r.from_id;
+          const other   = state.notes.find((n) => n.id === otherId);
+          return `<div class="relation-chip" data-id="${otherId}">
+            <span class="relation-score">${Math.round((r.score ?? 0) * 100)}%</span>
+            <span class="relation-title">${escHtml(other?.title ?? "Related note")}</span>
+            <span class="relation-reason">${escHtml(r.reason ?? "")}</span>
+          </div>`;
+        }).join("")
+      : `<p style="font-size:13px;color:var(--text-muted)">No related notes yet.</p>`;
+
+    relationsListEl.querySelectorAll(".relation-chip[data-id]").forEach((el) => {
+      el.addEventListener("click", () => { noteModal.classList.add("hidden"); openNote(el.dataset.id); });
+    });
+  } catch (_) {}
+}
+
+// ── Delete ────────────────────────────────────────────────────
+
+deleteNoteBtn?.addEventListener("click", async () => {
+  const ok = await confirm(`Delete "${state.currentNote?.title ?? "this note"}"? This cannot be undone.`);
   if (!ok) return;
+  try {
+    await DB.deleteNote(state.currentNote.id);
+    noteModal.classList.add("hidden");
+    toast("Note deleted", "success");
+    loadNotes();
+  } catch (err) { toast("Delete failed: " + err.message, "error"); }
+});
 
-  el.noteReprocessBtn.disabled = true;
-  el.noteProcessBadge.classList.remove('hidden');
-  el.noteProcessBadge.innerHTML = `<div class="spinner" style="width:10px;height:10px;border-width:1.5px"></div>&nbsp;Transcribing…`;
+// ── Re-process ────────────────────────────────────────────────
+
+reprocessBtn?.addEventListener("click", async () => {
+  if (!state.currentNote || !state.currentImageUrls.length) return;
+  reprocessBtn.disabled = true; reprocessBtn.textContent = "Processing…";
+  try {
+    const dataUrls = await Promise.all(state.currentImageUrls.map(fetchAsDataUrl));
+    const result = await API.processNote(dataUrls);
+    if (result?.ok && result.note) {
+      state.currentNote = result.note;
+      renderNoteModal(result.note);
+      loadNotes();
+      toast("Re-processed", "success");
+      triggerClarificationPopup(result.note);
+    }
+  } catch (err) { toast("Re-process failed: " + err.message, "error"); }
+  finally { reprocessBtn.disabled = false; reprocessBtn.textContent = "Re-process"; }
+});
+
+async function fetchAsDataUrl(url) {
+  const res = await fetch(url);
+  const blob = await res.blob();
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => resolve(e.target.result);
+    reader.readAsDataURL(blob);
+  });
+}
+
+// ── Export markdown ───────────────────────────────────────────
+
+exportMdBtn?.addEventListener("click", () => {
+  const n = state.currentNote; if (!n) return;
+  const md = `# ${n.title}\n\n## Summary\n${n.summary}\n\n## Organized\n${n.organized}\n\n## Transcription\n${n.transcription}\n`;
+  const a = Object.assign(document.createElement("a"), {
+    href: URL.createObjectURL(new Blob([md], { type: "text/markdown" })),
+    download: `${(n.title ?? "note").replace(/[^a-z0-9]/gi, "_")}.md`,
+  });
+  a.click();
+});
+
+// ── ANNOTATION ────────────────────────────────────────────────
+
+function destroyAnnotateEngine() {
+  state.annotateEngine?.destroy();
+  state.annotateEngine = null;
+}
+
+annotateToggleBtn?.addEventListener("click", () => {
+  annotateToolbar.classList.remove("hidden");
+  annotateToggleBtn.classList.add("hidden");
+  startAnnotateMode(0);
+});
+
+annotateDoneBtn?.addEventListener("click", () => {
+  annotateToolbar.classList.add("hidden");
+  annotateToggleBtn.classList.remove("hidden");
+  destroyAnnotateEngine();
+});
+
+async function startAnnotateMode(idx) {
+  destroyAnnotateEngine();
+  state.currentAnnotateIdx = idx;
+
+  const container = noteImagesWrap.children[idx];
+  if (!container) return;
+  const img = container.querySelector("img");
+  if (!img) return;
+
+  let canvas = container.querySelector("canvas");
+  if (!canvas) {
+    canvas = document.createElement("canvas");
+    canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;cursor:crosshair;touch-action:none;";
+    container.appendChild(canvas);
+  }
+
+  const rows = await DB.getAnnotations(state.currentNote.id);
+  const tags  = state.currentNote.tags ?? [];
+  annotateTagSelect.innerHTML = `<option value="">— pick tag —</option>` +
+    tags.map((t) => `<option value="${escHtml(t)}">${escHtml(t)}</option>`).join("");
+
+  state.annotateEngine = new AnnotationEngine(canvas, img, {
+    onSave: (ann) => DB.saveAnnotation({ ...ann, note_id: state.currentNote.id, image_index: idx }),
+    onDelete: (id) => DB.deleteAnnotation(id),
+    onSelect: (ann) => {
+      const sel = ann !== null;
+      annotateDeleteBtn.disabled = !sel;
+      annotateReprocessBtn.disabled = !sel;
+    },
+  });
+  state.annotateEngine.loadAnnotations(rows.filter((r) => r.image_index === idx));
+}
+
+document.querySelectorAll(".tool-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".tool-btn").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    state.annotateEngine?.setTool(btn.dataset.tool);
+  });
+});
+
+annotateTagSelect?.addEventListener("change", () => { state.annotateEngine?.setTag(annotateTagSelect.value); });
+annotateTagNew?.addEventListener("input", () => { if (annotateTagNew.value.trim()) state.annotateEngine?.setTag(annotateTagNew.value.trim()); });
+annotateDeleteBtn?.addEventListener("click", () => { state.annotateEngine?.deleteSelected(); annotateDeleteBtn.disabled = true; annotateReprocessBtn.disabled = true; });
+
+annotateReprocessBtn?.addEventListener("click", async () => {
+  if (!state.annotateEngine) return;
+  const url = state.currentImageUrls[state.currentAnnotateIdx];
+  const cropped = await state.annotateEngine.cropSelected(url);
+  if (!cropped) return;
+  const tag = annotateTagSelect.value || annotateTagNew.value.trim() || "region";
+  annotateReprocessBtn.disabled = true;
+  annotateReprocessBtn.textContent = "Processing…";
+  try {
+    const result = await API.processRegion({ imageDataUrl: cropped, tag, noteId: state.currentNote.id });
+    if (result?.ok && result.region) {
+      const existing = state.currentNote.organized ?? "";
+      const newContent = `${existing}\n\n## Region: ${tag}\n${result.region.content}`;
+      const updated = await DB.saveNote(state.currentNote.id, { organized: newContent });
+      state.currentNote = updated;
+      organizedView.innerHTML = renderMarkdown(newContent);
+      toast(`Region "${tag}" processed`, "success");
+    }
+  } catch (err) { toast("Region failed: " + err.message, "error"); }
+  finally { annotateReprocessBtn.disabled = false; annotateReprocessBtn.textContent = "Re-process region"; }
+});
+
+// ── FILE UPLOAD ───────────────────────────────────────────────
+
+uploadZone?.addEventListener("click", (e) => { if (!e.target.closest("label")) fileInput?.click(); });
+uploadZone?.addEventListener("dragover",  (e) => { e.preventDefault(); uploadZone.classList.add("drag-over"); });
+uploadZone?.addEventListener("dragleave", ()  => uploadZone.classList.remove("drag-over"));
+uploadZone?.addEventListener("drop",      (e) => { e.preventDefault(); uploadZone.classList.remove("drag-over"); handleFiles([...e.dataTransfer.files]); });
+fileInput?.addEventListener("change",   () => { handleFiles([...fileInput.files]); fileInput.value = ""; });
+cameraInput?.addEventListener("change", () => { handleFiles([...cameraInput.files]); cameraInput.value = ""; });
+
+async function handleFiles(files) {
+  if (!files.length) return;
+  queue.classList.remove("hidden");
+  for (const file of files) {
+    if (file.type === "application/pdf" || file.name.endsWith(".pdf")) {
+      await processJob(uuid(), file, "pdf");
+    } else if (file.type.startsWith("image/")) {
+      await processJob(uuid(), file, "image");
+    }
+  }
+}
+
+async function processJob(jobId, file, type) {
+  const item = document.createElement("div");
+  item.className = "queue-item"; item.id = `job-${jobId}`;
+  item.innerHTML = `
+    <div class="queue-item-header">
+      <span class="queue-filename">${escHtml(file.name)}</span>
+      <span class="queue-status">Preparing…</span>
+    </div>
+    <div class="queue-bar-track"><div class="queue-bar-fill" style="width:5%"></div></div>`;
+  queue.appendChild(item);
+
+  const setStatus = (msg, pct) => {
+    item.querySelector(".queue-status").textContent = msg;
+    item.querySelector(".queue-bar-fill").style.width = pct + "%";
+  };
 
   try {
-    const result = await API.processNote(note.images, state.settings.apiKey, state.settings.model);
-    Object.assign(note, { ...result, processingState: 'done', updatedAt: Date.now() });
-    await DB.saveNote(note);
+    let images;
+    if (type === "pdf") {
+      setStatus("Rendering PDF pages…", 15);
+      images = await renderPDF(file);
+    } else {
+      const dataUrl = await API.fileToDataUrl(file);
+      images = [dataUrl];
+    }
+
+    setStatus("Transcribing with AI…", 40);
+    const result = await API.processNote(images);
+    setStatus("Saving…", 80);
+    if (!result?.ok) throw new Error(result?.error ?? "Processing failed");
+
+    setStatus("Done!", 100);
+    item.style.opacity = "0.5";
+    setTimeout(() => item.remove(), 2500);
+
     await loadNotes();
-    await openNote(note.id);
-    toast('Note reprocessed', 'success');
+
+    if (result.note?.id) {
+      openNote(result.note.id);
+      API.findRelations(result.note.id).catch(() => {});
+      triggerClarificationPopup(result.note);
+    }
   } catch (err) {
-    toast(`Reprocess failed: ${err.message}`, 'error');
-    el.noteProcessBadge.classList.add('hidden');
+    item.classList.add("error");
+    item.querySelector(".queue-status").textContent = "Error: " + err.message;
+    setTimeout(() => item.remove(), 6000);
+  }
+}
+
+async function renderPDF(file) {
+  const buffer = await file.arrayBuffer();
+  const pdf    = await pdfjsLib.getDocument({ data: buffer }).promise;
+  const images = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const vp   = page.getViewport({ scale: 2 });
+    const canvas = document.createElement("canvas");
+    canvas.width = vp.width; canvas.height = vp.height;
+    await page.render({ canvasContext: canvas.getContext("2d"), viewport: vp }).promise;
+    images.push(canvas.toDataURL("image/jpeg", 0.88));
+  }
+  return images;
+}
+
+// ── CLARIFICATION POPUP ───────────────────────────────────────
+
+async function triggerClarificationPopup(note) {
+  if (!note?.transcription) return;
+  const regex   = /(.{0,40})\[unclear\](.{0,40})/g;
+  const matches = [];
+  let m;
+  while ((m = regex.exec(note.transcription)) !== null) {
+    matches.push({ before: m[1], after: m[2] });
+  }
+  if (!matches.length) return;
+
+  clarifyItems.innerHTML = "";
+  clarifyModal._noteId = note.id;
+  clarifyModal._inputs = [];
+
+  matches.slice(0, 5).forEach((match) => {
+    const ctx = `${match.before}[unclear]${match.after}`.trim();
+    const div = document.createElement("div");
+    div.className = "clarify-item";
+    div.innerHTML = `
+      <div class="clarify-field">
+        <div class="clarify-label">Context: "…${escHtml(ctx)}…"</div>
+        <input class="clarify-input" type="text" placeholder="What does the unclear word say?" />
+      </div>`;
+    clarifyItems.appendChild(div);
+    clarifyModal._inputs.push({ input: div.querySelector(".clarify-input"), context: ctx });
+  });
+
+  clarifyModal.classList.remove("hidden");
+}
+
+clarifyClose?.addEventListener("click", () => clarifyModal.classList.add("hidden"));
+clarifySkip?.addEventListener("click",  () => clarifyModal.classList.add("hidden"));
+clarifyModal?.querySelector(".modal-backdrop")?.addEventListener("click", () => clarifyModal.classList.add("hidden"));
+
+clarifySubmit?.addEventListener("click", async () => {
+  const noteId = clarifyModal._noteId;
+  const inputs = clarifyModal._inputs ?? [];
+  const corrections = inputs
+    .map((item) => ({ original: "[unclear]", correction: item.input.value.trim(), context: item.context }))
+    .filter((c) => c.correction);
+
+  if (!corrections.length) { clarifyModal.classList.add("hidden"); return; }
+
+  clarifySubmit.disabled = true; clarifySubmit.textContent = "Learning…";
+  try {
+    const res = await API.learnHandwriting({ noteId, corrections });
+    clarifyModal.classList.add("hidden");
+    toast(res.synthesized ? "AI updated your handwriting profile!" : "Corrections saved. Thanks!", "success");
+  } catch (err) {
+    toast("Failed: " + err.message, "error");
   } finally {
-    el.noteReprocessBtn.disabled = false;
+    clarifySubmit.disabled = false; clarifySubmit.textContent = "Submit & Learn";
   }
-}
+});
 
-async function deleteCurrentNote() {
-  if (!state.currentNoteId) return;
-  const note = await DB.getNote(state.currentNoteId);
-  const ok   = await confirm('Delete note?', `"${note?.title ?? 'This note'}" will be permanently deleted.`);
-  if (!ok) return;
-  await DB.deleteNote(state.currentNoteId);
-  closeNoteModal();
-  await loadNotes();
-  toast('Note deleted', 'info');
-}
+// ── MIND MAP ──────────────────────────────────────────────────
 
-async function saveTitleEdit() {
-  if (!state.currentNoteId) return;
-  const newTitle = el.noteModalTitle.textContent.trim();
-  if (!newTitle) return;
-  const note = await DB.getNote(state.currentNoteId);
-  if (!note || note.title === newTitle) return;
-  note.title     = newTitle;
-  note.updatedAt = Date.now();
-  await DB.saveNote(note);
-  await loadNotes();
-}
-
-function exportNoteMarkdown(note) {
-  const md = [
-    `# ${note.title}`, `_${fmtDate(note.createdAt)}_`, '',
-    `## Summary`, note.summary ?? '', '',
-    `## Organized Notes`, note.organized ?? '', '',
-    `## Original Transcription`, '```', note.transcription ?? '', '```', '',
-    `**Tags:** ${(note.tags ?? []).map(t => `#${t}`).join(' ')}`,
-  ].join('\n');
-
-  const a    = Object.assign(document.createElement('a'), {
-    href:     URL.createObjectURL(new Blob([md], { type: 'text/markdown' })),
-    download: `${(note.title ?? 'note').replace(/[^a-z0-9]/gi,'_').toLowerCase()}.md`,
-  });
-  a.click();
-  URL.revokeObjectURL(a.href);
-}
-
-/* ── export / import ─────────────────────────────────────────── */
-
-async function exportAll() {
-  const data = await DB.exportAll();
-  const a    = Object.assign(document.createElement('a'), {
-    href:     URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })),
-    download: `paperbrain-${new Date().toISOString().slice(0,10)}.json`,
-  });
-  a.click();
-  URL.revokeObjectURL(a.href);
-  toast('Export downloaded', 'success');
-}
-
-async function importNotes(file) {
+async function loadMindMap() {
   try {
-    const data = JSON.parse(await file.text());
-    await DB.importAll(data);
-    await loadNotes();
-    showMainView(state.notes.length ? 'empty' : 'upload');
-    toast(`Imported ${data.notes?.length ?? 0} notes`, 'success');
-  } catch (err) {
-    toast(`Import failed: ${err.message}`, 'error');
-  }
+    const [notes, relations, positions] = await Promise.all([
+      DB.getAllNotes(), DB.getAllRelations(), DB.getMindmapPositions(),
+    ]);
+    if (!state.mindmap) {
+      state.mindmap = new MindMap("#mindmap-svg", {
+        onOpenNote: (id) => { switchView("notes"); openNote(id); },
+        onSavePosition: (pos) => DB.saveMindmapPosition(pos).catch(() => {}),
+      });
+    }
+    state.mindmap.load(notes, relations, positions);
+  } catch (err) { toast("Mind map error: " + err.message, "error"); }
 }
 
-/* ── search ──────────────────────────────────────────────────── */
+mapResetBtn?.addEventListener("click", () => state.mindmap?.resetLayout());
+mapTagLinksBtn?.addEventListener("click", () => state.mindmap?.toggleTagLinks());
 
-let searchTimer = null;
-function handleSearch(q) {
-  state.searchQuery = q;
-  el.searchClear.classList.toggle('hidden', !q);
-  clearTimeout(searchTimer);
-  searchTimer = setTimeout(loadNotes, 260);
-}
+let _mapFilter;
+mapFilter?.addEventListener("input", () => {
+  clearTimeout(_mapFilter);
+  _mapFilter = setTimeout(() => state.mindmap?.filterByTag(mapFilter.value.trim() || null), 300);
+});
 
-/* ── drag and drop ───────────────────────────────────────────── */
+// ── LIGHTBOX ──────────────────────────────────────────────────
 
-function setupDragDrop() {
-  const dz = el.dropTarget;
-  dz.addEventListener('dragenter', e => { e.preventDefault(); dz.classList.add('drag-over'); });
-  dz.addEventListener('dragover',  e => { e.preventDefault(); dz.classList.add('drag-over'); });
-  dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
-  dz.addEventListener('drop', e => {
-    e.preventDefault();
-    dz.classList.remove('drag-over');
-    if (e.dataTransfer?.files?.length) handleFiles(e.dataTransfer.files);
-  });
+lightboxClose?.addEventListener("click", () => lightbox.classList.add("hidden"));
+lightbox?.addEventListener("click", (e) => { if (e.target === lightbox) lightbox.classList.add("hidden"); });
 
-  // Global drop (e.g. onto sidebar)
-  document.addEventListener('dragover', e => e.preventDefault());
-  document.addEventListener('drop', e => {
-    e.preventDefault();
-    if (e.dataTransfer?.files?.length) handleFiles(e.dataTransfer.files);
-  });
-}
-
-/* ── events ──────────────────────────────────────────────────── */
-
-function setupEvents() {
-  // Settings
-  el.settingsBtn.addEventListener('click',     openSettingsModal);
-  el.closeSettings.addEventListener('click',   closeSettingsModal);
-  el.settingsModal.addEventListener('click', e => { if (e.target === el.settingsModal) closeSettingsModal(); });
-  el.saveSettingsBtn.addEventListener('click', saveSettings);
-
-  el.toggleKeyBtn.addEventListener('click', () => {
-    const hide = el.apiKeyInput.type === 'password';
-    el.apiKeyInput.type       = hide ? 'text'    : 'password';
-    el.toggleKeyBtn.textContent = hide ? 'Hide' : 'Show';
-  });
-
-  el.testKeyBtn.addEventListener('click', async () => {
-    const key = el.apiKeyInput.value.trim();
-    if (!key) { toast('Enter a key first', 'warning'); return; }
-
-    if (location.protocol === 'file:') {
-      toast('Open the app via HTTP — not as a file:// URL. Use GitHub Pages or a local server.', 'error', 8000);
-      return;
-    }
-
-    el.testKeyBtn.disabled    = true;
-    el.testKeyBtn.textContent = '…';
-    try {
-      await API.testApiKey(key);
-      toast('API key valid ✓', 'success');
-    } catch (err) {
-      if (err instanceof CorsOrNetworkError) {
-        showCorsHelp();
-      } else if (err.message.includes('401') || err.message.toLowerCase().includes('authentication')) {
-        toast('Invalid API key — double-check it at console.anthropic.com', 'error', 6000);
-      } else {
-        toast(`API error: ${err.message}`, 'error', 6000);
-      }
-    } finally {
-      el.testKeyBtn.disabled    = false;
-      el.testKeyBtn.textContent = 'Test';
-    }
-  });
-
-  document.querySelectorAll('[data-theme-btn]').forEach(b =>
-    b.addEventListener('click', () => applyTheme(b.dataset.themeBtn))
-  );
-
-  el.showProxyHelp?.addEventListener('click', e => { e.preventDefault(); showCorsHelp(); });
-  el.exportBtn.addEventListener('click', exportAll);
-  el.importFile.addEventListener('change', e => {
-    const f = e.target.files?.[0];
-    if (f) { importNotes(f); e.target.value = ''; }
-  });
-  el.clearAllBtn.addEventListener('click', async () => {
-    const ok = await confirm('Clear all data?', 'All notes, relations, and settings will be permanently deleted.');
-    if (!ok) return;
-    await DB.clearAllData();
-    state.notes = []; state.currentNoteId = null;
-    closeNoteModal(); closeSettingsModal();
-    renderNotesList();
-    showMainView('upload');
-    toast('All data cleared', 'info');
-  });
-
-  // Upload
-  el.uploadBtn.addEventListener('click',    () => el.fileInput.click());
-  el.cameraBtn.addEventListener('click',    () => el.cameraInput.click());
-  el.newUploadBtn.addEventListener('click', () => {
-    showMainView('upload');
-    el.fileInput.click();
-  });
-  el.emptyUploadBtn.addEventListener('click', () => {
-    showMainView('upload');
-    el.fileInput.click();
-  });
-  el.fileInput.addEventListener('change', e => {
-    if (e.target.files?.length) { handleFiles(e.target.files); e.target.value = ''; }
-  });
-  el.cameraInput.addEventListener('change', e => {
-    if (e.target.files?.length) { handleFiles(e.target.files); e.target.value = ''; }
-  });
-
-  // Note modal
-  el.closeNoteModal.addEventListener('click', closeNoteModal);
-  el.noteModal.addEventListener('click', e => { if (e.target === el.noteModal) closeNoteModal(); });
-  el.noteModalTitle.addEventListener('blur',    saveTitleEdit);
-  el.noteModalTitle.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); el.noteModalTitle.blur(); } });
-  el.noteReprocessBtn.addEventListener('click', reprocessCurrentNote);
-  el.noteDeleteBtn.addEventListener('click',    deleteCurrentNote);
-  el.noteExportMdBtn.addEventListener('click',  async () => {
-    if (state.currentNoteId) {
-      const note = await DB.getNote(state.currentNoteId);
-      if (note) exportNoteMarkdown(note);
-    }
-  });
-
-  // Tabs
-  document.querySelectorAll('.tab-btn').forEach(b =>
-    b.addEventListener('click', () => switchTab(b.dataset.tab))
-  );
-
-  // Tags
-  el.noteTagInput.addEventListener('keydown', async e => {
-    if (e.key === 'Enter' || e.key === ',') {
-      e.preventDefault();
-      const v = el.noteTagInput.value.replace(/,$/, '').trim();
-      if (v) { await addTag(v); el.noteTagInput.value = ''; }
-    }
-  });
-  el.noteTagsList.addEventListener('click', async e => {
-    const btn = e.target.closest('.tag-chip-remove');
-    if (btn) await removeTag(btn.dataset.tag);
-  });
-
-  // Related notes
-  el.relatedNotesList.addEventListener('click', e => {
-    const chip = e.target.closest('.related-chip');
-    if (chip?.dataset.id) openNote(chip.dataset.id);
-  });
-
-  // Search
-  el.searchInput.addEventListener('input',  e => handleSearch(e.target.value));
-  el.searchClear.addEventListener('click',  () => { el.searchInput.value = ''; handleSearch(''); });
-
-  // Keyboard
-  document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') {
-      if (!el.noteModal.classList.contains('hidden'))         closeNoteModal();
-      else if (!el.settingsModal.classList.contains('hidden')) closeSettingsModal();
-    }
-    if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-      e.preventDefault();
-      el.searchInput.focus(); el.searchInput.select();
-    }
-  });
-
-  setupDragDrop();
-}
-
-/* ── init ────────────────────────────────────────────────────── */
+// ── INIT ──────────────────────────────────────────────────────
 
 async function init() {
-  try {
-    await DB.openDB();
-    await loadSettings();
-    await loadNotes();
-    setupEvents();
+  // Theme
+  const dark = (localStorage.getItem("pb_theme") ?? "dark") === "dark";
+  document.body.className = dark ? "theme-dark" : "theme-light";
+  if (themeToggle) themeToggle.checked = dark;
 
-    showMainView(state.notes.length ? 'empty' : 'upload');
+  // Initial view state
+  viewNotes.style.display = "flex";
+  viewMap.style.display   = "none";
 
-    if (!state.settings.apiKey || !localStorage.getItem('pb_proxy')) {
-      setTimeout(() => {
-        openSettingsModal();
-        if (!state.settings.apiKey) {
-          toast('Welcome! Add your API key and proxy URL in Settings to begin.', 'info', 6000);
-        } else if (!localStorage.getItem('pb_proxy')) {
-          toast('A proxy URL is required — see Settings for the 2-minute setup.', 'warning', 7000);
-        }
-      }, 500);
-    }
-  } catch (err) {
-    console.error('[init]', err);
-    toast('Failed to start. Please refresh the page.', 'error', 10000);
-  }
+  // Auth
+  const user = await Auth.init();
+  Auth.onAuthChange((u) => { if (u) showApp(); else showAuth(); });
+  if (user) showApp(); else showAuth();
 }
 
 init();
