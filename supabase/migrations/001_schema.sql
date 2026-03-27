@@ -1,0 +1,3 @@
+-- This file is superseded by 001_initial.sql
+-- The canonical schema is in 001_initial.sql — run that instead.
+-- This file is intentionally left blank to avoid conflicts.

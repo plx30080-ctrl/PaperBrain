@@ -5,12 +5,20 @@
  * No API key is needed on the client — the key lives in the Edge Function secret.
  */
 
-import { client } from "./auth.js";
+import { client, getToken } from "./auth.js";
 
-// Use client.functions.invoke() — it automatically attaches the current
-// session token so we never have to manage the Authorization header manually.
 async function callFn(name, body) {
-  const { data, error } = await client.functions.invoke(name, { body });
+  const token = getToken() ?? (await client.auth.getSession()).data.session?.access_token;
+  if (!token) {
+    throw new Error("You must be signed in to use this feature.");
+  }
+
+  const { data, error } = await client.functions.invoke(name, {
+    body,
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
   if (error) throw new Error(error.message ?? String(error));
   return data;
 }
