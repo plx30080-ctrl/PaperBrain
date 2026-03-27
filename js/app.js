@@ -172,7 +172,7 @@ function corsHeaders() {
   return {
     'Access-Control-Allow-Origin':  '*',
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'content-type, x-api-key, anthropic-version, anthropic-dangerous-allow-browser',
+    'Access-Control-Allow-Headers': '*',
   };
 }`;
 
