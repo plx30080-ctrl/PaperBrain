@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PaperBrain – Handwritten Notes AI</title>
+  <link rel="stylesheet" href="css/styles.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+<div id="app">
+
+  <!-- ===================== SETTINGS MODAL ===================== -->
+  <div id="settings-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-label="Settings">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h2>Settings</h2>
+        <button class="icon-btn" id="close-settings" aria-label="Close settings">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="api-key-input">Anthropic API Key</label>
+          <div class="input-row">
+            <input type="password" id="api-key-input" placeholder="sk-ant-api03-..." autocomplete="off" spellcheck="false" />
+            <button class="btn btn-sm btn-outline" id="toggle-key-btn">Show</button>
+            <button class="btn btn-sm btn-outline" id="test-key-btn">Test</button>
+          </div>
+          <p class="form-hint">Stored locally in your browser only. Never transmitted except to Anthropic. <a href="https://console.anthropic.com" target="_blank" rel="noopener noreferrer">Get a key →</a></p>
+        </div>
+        <div class="form-group">
+          <label for="model-select">Model</label>
+          <select id="model-select">
+            <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 — Fast &amp; affordable</option>
+            <option value="claude-sonnet-4-6" selected>Claude Sonnet 4.6 — Recommended</option>
+            <option value="claude-opus-4-6">Claude Opus 4.6 — Best quality</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Theme</label>
+          <div class="toggle-group">
+            <button class="toggle-btn" data-theme-btn="light">Light</button>
+            <button class="toggle-btn" data-theme-btn="dark">Dark</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Data</label>
+          <div class="btn-row">
+            <button class="btn btn-outline" id="export-btn">Export JSON</button>
+            <label class="btn btn-outline" style="cursor:pointer">
+              Import JSON
+              <input type="file" id="import-file" accept=".json" class="hidden" />
+            </label>
+          </div>
+        </div>
+        <div class="form-group danger-zone">
+          <label>Danger Zone</label>
+          <button class="btn btn-danger" id="clear-all-btn">Clear All Data</button>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" id="save-settings-btn">Save Settings</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== NOTE DETAIL MODAL ===================== -->
+  <div id="note-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-label="Note Detail">
+    <div class="modal-box modal-box--wide">
+      <div class="modal-header">
+        <div class="note-header-left">
+          <div id="note-modal-title" class="note-modal-title" contenteditable="true" spellcheck="false" data-placeholder="Note title"></div>
+          <div class="note-meta-row">
+            <span id="note-modal-date" class="note-meta-date"></span>
+            <span id="note-modal-source" class="source-badge"></span>
+            <span id="note-processing-badge" class="processing-badge hidden"></span>
+          </div>
+        </div>
+        <div class="note-header-actions">
+          <button class="btn btn-sm btn-outline" id="note-reprocess-btn" title="Reprocess with AI">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.63"/></svg>
+            Reprocess
+          </button>
+          <button class="btn btn-sm btn-outline" id="note-export-md-btn" title="Export as Markdown">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Export
+          </button>
+          <button class="btn btn-sm btn-danger-outline" id="note-delete-btn" title="Delete note">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+            Delete
+          </button>
+          <button class="icon-btn" id="close-note-modal" aria-label="Close">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="note-modal-body">
+        <!-- Left: original images -->
+        <div class="note-images-col">
+          <div class="col-label">Original</div>
+          <div id="note-images-container" class="note-images-scroll"></div>
+        </div>
+        <!-- Right: content tabs -->
+        <div class="note-content-col">
+          <div class="note-tabs">
+            <button class="tab-btn active" data-tab="organized">Organized</button>
+            <button class="tab-btn" data-tab="transcription">Transcription</button>
+            <button class="tab-btn" data-tab="summary">Summary</button>
+          </div>
+          <div id="tab-organized" class="tab-panel active markdown-body" id="note-organized"></div>
+          <div id="tab-transcription" class="tab-panel hidden note-preformatted"></div>
+          <div id="tab-summary" class="tab-panel hidden note-summary-panel"></div>
+        </div>
+      </div>
+
+      <div class="note-modal-footer">
+        <div class="footer-row">
+          <span class="footer-label">Tags</span>
+          <div id="note-tags-list" class="tags-row"></div>
+          <input type="text" id="note-tag-input" class="tag-input" placeholder="Add tag…" maxlength="30" />
+        </div>
+        <div class="footer-row" id="related-row">
+          <span class="footer-label">Related</span>
+          <div id="related-notes-list" class="related-row"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== APP SHELL ===================== -->
+  <div class="app-shell">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-top">
+        <div class="logo">
+          <span class="logo-mark">🧠</span>
+          <span class="logo-text">PaperBrain</span>
+        </div>
+        <button class="icon-btn icon-btn--muted" id="settings-btn" aria-label="Settings" title="Settings">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
+      </div>
+
+      <div class="search-wrap">
+        <div class="search-box">
+          <svg class="search-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="search" id="search-input" placeholder="Search notes…" aria-label="Search notes" autocomplete="off" />
+          <button class="search-clear hidden" id="search-clear" aria-label="Clear search">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="notes-list-header">
+        <span id="notes-count" class="notes-count">0 notes</span>
+        <button class="new-note-btn" id="new-upload-btn" title="Upload notes">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
+      </div>
+
+      <div id="notes-list" class="notes-list" role="list">
+        <!-- Note cards rendered here -->
+      </div>
+    </aside>
+
+    <!-- Main content area -->
+    <main class="main-content">
+      <!-- Upload Zone -->
+      <div id="upload-zone" class="upload-zone">
+        <div class="drop-target" id="drop-target">
+          <div class="upload-illustration">
+            <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="upload-svg"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+          </div>
+          <h2 class="upload-title">Upload Handwritten Notes</h2>
+          <p class="upload-subtitle">Drag &amp; drop photos or PDFs here</p>
+          <div class="upload-btn-row">
+            <button class="btn btn-primary btn-lg" id="upload-btn">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              Choose Files
+            </button>
+            <button class="btn btn-outline btn-lg" id="camera-btn">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+              Camera
+            </button>
+          </div>
+          <p class="upload-hint">JPG · PNG · HEIC · WebP · PDF</p>
+          <input type="file" id="file-input" accept="image/*,.pdf" multiple class="hidden" />
+          <input type="file" id="camera-input" accept="image/*" capture="environment" class="hidden" />
+        </div>
+      </div>
+
+      <!-- Processing Queue -->
+      <div id="processing-queue" class="processing-queue hidden">
+        <div class="processing-header">
+          <span class="processing-title">Processing</span>
+          <span id="processing-status" class="processing-status"></span>
+        </div>
+        <div id="queue-items" class="queue-items"></div>
+      </div>
+
+      <!-- Empty state (when notes exist but none selected) -->
+      <div id="empty-state" class="empty-state hidden">
+        <div class="empty-icon">🧠</div>
+        <h3>Select a note</h3>
+        <p>Choose a note from the sidebar or upload new ones</p>
+        <button class="btn btn-primary" id="empty-upload-btn">Upload Notes</button>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div id="toast-container" class="toast-container" role="status" aria-live="polite"></div>
+
+<!-- Confirm dialog -->
+<div id="confirm-overlay" class="modal-overlay hidden">
+  <div class="confirm-box">
+    <h3 id="confirm-title">Are you sure?</h3>
+    <p id="confirm-message"></p>
+    <div class="confirm-actions">
+      <button class="btn btn-outline" id="confirm-cancel">Cancel</button>
+      <button class="btn btn-danger" id="confirm-ok">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
