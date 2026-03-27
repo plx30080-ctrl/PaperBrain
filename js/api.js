@@ -5,7 +5,7 @@
  * No API key is needed on the client — the key lives in the Edge Function secret.
  */
 
-import { getToken } from "./auth.js";
+import { client } from "./auth.js";
 
 const { supabaseUrl } = window.PAPERBRAIN_CONFIG ?? {};
 
@@ -14,7 +14,10 @@ function fnUrl(name) {
 }
 
 async function callFn(name, body) {
-  const token = getToken();
+  // Always fetch the current session directly from the Supabase client
+  // so we never use a stale or null manually-tracked token.
+  const { data: { session } } = await client.auth.getSession();
+  const token = session?.access_token;
   if (!token) throw new Error("Not authenticated");
 
   const res = await fetch(fnUrl(name), {
