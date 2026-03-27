@@ -37,12 +37,22 @@ export async function init() {
   const { data: { session } } = await client.auth.getSession();
   _session = session;
 
+  // Eagerly push the token into the functions client so invoke() uses the
+  // user JWT immediately — onAuthStateChange fires asynchronously and would
+  // otherwise leave the functions client using the anon key on first call.
+  if (session?.access_token) {
+    client.functions.setAuth(session.access_token);
+  }
+
   client.auth.onAuthStateChange((_event, session) => {
     _notify(session);
+    // Keep functions client in sync on every auth state change.
+    client.functions.setAuth(session?.access_token ?? supabaseAnonKey ?? "");
   });
 
   return session?.user ?? null;
 }
+
 
 /** Register a callback invoked whenever auth state changes. Returns unsubscribe fn. */
 export function onAuthChange(fn) {
@@ -78,6 +88,9 @@ export async function signIn(email, password) {
   const { data, error } = await client.auth.signInWithPassword({ email, password });
   if (error) return { user: null, error: error.message };
   _notify(data.session);
+  if (data.session?.access_token) {
+    client.functions.setAuth(data.session.access_token);
+  }
   return { user: data.user, error: null };
 }
 
