@@ -23,6 +23,12 @@
         </button>
       </div>
       <div class="modal-body">
+        <!-- CORS banner — shown automatically on GitHub Pages -->
+        <div id="cors-banner" class="cors-banner hidden">
+          <strong>⚠️ One-time setup required</strong><br>
+          Browsers block direct calls to api.anthropic.com (CORS policy). You need a small free proxy — takes ~2 minutes. See the <em>Proxy URL</em> field below.
+        </div>
+
         <div class="form-group">
           <label for="api-key-input">Anthropic API Key</label>
           <div class="input-row">
@@ -30,8 +36,19 @@
             <button class="btn btn-sm btn-outline" id="toggle-key-btn">Show</button>
             <button class="btn btn-sm btn-outline" id="test-key-btn">Test</button>
           </div>
-          <p class="form-hint">Stored locally in your browser only. Never transmitted except to Anthropic. <a href="https://console.anthropic.com" target="_blank" rel="noopener noreferrer">Get a key →</a><br>
-          <strong>Note:</strong> The app must be served over HTTP/S (GitHub Pages, Live Server, etc.) — opening as a <code>file://</code> URL will block API calls.</p>
+          <p class="form-hint">Stored locally in your browser only. <a href="https://console.anthropic.com" target="_blank" rel="noopener noreferrer">Get a key →</a></p>
+        </div>
+
+        <div class="form-group">
+          <label for="proxy-url-input">
+            Proxy URL
+            <span class="label-required">required for GitHub Pages</span>
+          </label>
+          <input type="url" id="proxy-url-input" placeholder="https://my-worker.workers.dev/v1/messages" autocomplete="off" spellcheck="false" />
+          <p class="form-hint">
+            Anthropic blocks browser CORS requests, so requests must be routed through a proxy you control.
+            <a href="#" id="show-proxy-help">How to set one up in 2 minutes →</a>
+          </p>
         </div>
         <div class="form-group">
           <label for="model-select">Model</label>

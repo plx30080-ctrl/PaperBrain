@@ -52,6 +52,9 @@ const el = {
   apiKeyInput:        $('#api-key-input'),
   toggleKeyBtn:       $('#toggle-key-btn'),
   testKeyBtn:         $('#test-key-btn'),
+  proxyUrlInput:      $('#proxy-url-input'),
+  showProxyHelp:      $('#show-proxy-help'),
+  corsBanner:         $('#cors-banner'),
   modelSelect:        $('#model-select'),
   saveSettingsBtn:    $('#save-settings-btn'),
   exportBtn:          $('#export-btn'),
@@ -268,9 +271,15 @@ function applyTheme(theme) {
 }
 
 function openSettingsModal() {
-  el.apiKeyInput.value = state.settings.apiKey;
-  el.modelSelect.value = state.settings.model;
+  el.apiKeyInput.value  = state.settings.apiKey;
+  el.modelSelect.value  = state.settings.model;
+  el.proxyUrlInput.value = localStorage.getItem('pb_proxy') ?? '';
   applyTheme(state.settings.theme);
+
+  // Show CORS banner if no proxy is configured (GitHub Pages always needs one)
+  const needsProxy = !localStorage.getItem('pb_proxy');
+  el.corsBanner.classList.toggle('hidden', !needsProxy);
+
   el.settingsModal.classList.remove('hidden');
   setTimeout(() => el.apiKeyInput.focus(), 60);
 }
@@ -280,13 +289,20 @@ function closeSettingsModal() {
 }
 
 async function saveSettings() {
-  const apiKey = el.apiKeyInput.value.trim();
-  const model  = el.modelSelect.value;
-  const theme  = document.documentElement.getAttribute('data-theme') ?? 'light';
+  const apiKey   = el.apiKeyInput.value.trim();
+  const model    = el.modelSelect.value;
+  const theme    = document.documentElement.getAttribute('data-theme') ?? 'light';
+  const proxyUrl = el.proxyUrlInput.value.trim();
 
   state.settings.apiKey = apiKey;
   state.settings.model  = model;
   state.settings.theme  = theme;
+
+  if (proxyUrl) {
+    localStorage.setItem('pb_proxy', proxyUrl);
+  } else {
+    localStorage.removeItem('pb_proxy');
+  }
 
   await Promise.all([
     DB.setSetting('apiKey', apiKey),
@@ -826,6 +842,7 @@ function setupEvents() {
     b.addEventListener('click', () => applyTheme(b.dataset.themeBtn))
   );
 
+  el.showProxyHelp?.addEventListener('click', e => { e.preventDefault(); showCorsHelp(); });
   el.exportBtn.addEventListener('click', exportAll);
   el.importFile.addEventListener('change', e => {
     const f = e.target.files?.[0];
@@ -928,10 +945,14 @@ async function init() {
 
     showMainView(state.notes.length ? 'empty' : 'upload');
 
-    if (!state.settings.apiKey) {
+    if (!state.settings.apiKey || !localStorage.getItem('pb_proxy')) {
       setTimeout(() => {
-        toast('Welcome! Add your Anthropic API key in Settings to begin.', 'info', 6000);
         openSettingsModal();
+        if (!state.settings.apiKey) {
+          toast('Welcome! Add your API key and proxy URL in Settings to begin.', 'info', 6000);
+        } else if (!localStorage.getItem('pb_proxy')) {
+          toast('A proxy URL is required — see Settings for the 2-minute setup.', 'warning', 7000);
+        }
       }, 500);
     }
   } catch (err) {
