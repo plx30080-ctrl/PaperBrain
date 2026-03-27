@@ -7,30 +7,11 @@
 
 import { client } from "./auth.js";
 
-const { supabaseUrl } = window.PAPERBRAIN_CONFIG ?? {};
-
-function fnUrl(name) {
-  return `${supabaseUrl}/functions/v1/${name}`;
-}
-
+// Use client.functions.invoke() — it automatically attaches the current
+// session token so we never have to manage the Authorization header manually.
 async function callFn(name, body) {
-  // Always fetch the current session directly from the Supabase client
-  // so we never use a stale or null manually-tracked token.
-  const { data: { session } } = await client.auth.getSession();
-  const token = session?.access_token;
-  if (!token) throw new Error("Not authenticated");
-
-  const res = await fetch(fnUrl(name), {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(body),
-  });
-
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error ?? `Edge Function error ${res.status}`);
+  const { data, error } = await client.functions.invoke(name, { body });
+  if (error) throw new Error(error.message ?? String(error));
   return data;
 }
 
