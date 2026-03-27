@@ -27,7 +27,7 @@ async function call(apiKey, model, messages, maxTokens = 4096) {
         'content-type':                      'application/json',
         'x-api-key':                         apiKey,
         'anthropic-version':                 API_VER,
-        'anthropic-dangerous-allow-browser': 'true',
+        'anthropic-dangerous-direct-browser-access': 'true',
       },
       body: JSON.stringify({ model, max_tokens: maxTokens, messages }),
     });
