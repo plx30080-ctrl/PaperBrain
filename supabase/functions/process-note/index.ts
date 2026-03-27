@@ -39,7 +39,7 @@ Deno.serve(async (req) => {
       { global: { headers: { authorization: authHeader } } },
     );
 
-    const { data: { user }, error: authErr } = await admin.auth.getUser();
+    const { data: { user }, error: authErr } = await supabase.auth.getUser();
     if (authErr || !user) {
       console.error("[process-note] auth error:", authErr?.message, "header present:", !!authHeader);
       return json({ error: "Unauthorized" }, 401);
