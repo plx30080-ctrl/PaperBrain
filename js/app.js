@@ -16,17 +16,26 @@ if (window.pdfjsLib) {
     "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 }
 
+// Configure marked to strip raw HTML from AI content (XSS prevention)
+if (typeof marked !== "undefined") {
+  marked.setOptions({ sanitize: false, mangle: false, headerIds: false });
+}
+
 // ── State ─────────────────────────────────────────────────────
 const state = {
-  notes:            [],
-  currentNote:      null,
-  currentImageUrls: [],
-  editMode:         false,
-  editOriginals:    {},
-  annotateEngine:   null,
+  notes:              [],
+  currentNote:        null,
+  currentImageUrls:   [],
+  editMode:           false,
+  editOriginals:      {},
+  annotateEngine:     null,
   currentAnnotateIdx: 0,
-  mindmap:          null,
-  authMode:         "signin",
+  mindmap:            null,
+  mindmapStale:       true,
+  authMode:           "signin",
+  // Clarification popup
+  clarifyNoteId:      null,
+  clarifyInputs:      [],
 };
 
 // ── DOM helpers ───────────────────────────────────────────────
@@ -120,9 +129,16 @@ const confirmOk     = $("confirm-ok");
 const confirmCancel = $("confirm-cancel");
 const toastContainer = $("toast-container");
 
-const mapResetBtn   = $("map-reset");
-const mapTagLinksBtn = $("map-tag-links");
-const mapFilter     = $("map-filter");
+const mapResetBtn      = $("map-reset");
+const mapTagLinksBtn   = $("map-tag-links");
+const mapAddRelation   = $("map-add-relation");
+const mapZoomIn        = $("map-zoom-in");
+const mapZoomOut       = $("map-zoom-out");
+const mapFit           = $("map-fit");
+const mapExport        = $("map-export");
+const mapFilter        = $("map-filter");
+const mapStats         = $("map-stats");
+const mapRelationHint  = $("map-relation-hint");
 
 // ── Utilities ─────────────────────────────────────────────────
 
@@ -130,11 +146,14 @@ function uuid() { return crypto.randomUUID(); }
 
 function escHtml(str) {
   return String(str ?? "")
-    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
 function fmtDate(iso) {
-  return new Date(iso).toLocaleDateString(undefined, { year:"numeric", month:"short", day:"numeric" });
+  return new Date(iso).toLocaleDateString(undefined, {
+    year: "numeric", month: "short", day: "numeric",
+  });
 }
 
 function toast(msg, type = "info", duration = 3500) {
@@ -145,24 +164,27 @@ function toast(msg, type = "info", duration = 3500) {
   setTimeout(() => el.remove(), duration);
 }
 
-function confirm(msg) {
+function showConfirm(msg) {
   return new Promise((resolve) => {
     confirmMsg.textContent = msg;
     confirmDialog.classList.remove("hidden");
-    function ok()  { cleanup(); resolve(true);  }
-    function no()  { cleanup(); resolve(false); }
+    function ok()     { cleanup(); resolve(true);  }
+    function cancel() { cleanup(); resolve(false); }
     function cleanup() {
       confirmDialog.classList.add("hidden");
       confirmOk.removeEventListener("click", ok);
-      confirmCancel.removeEventListener("click", no);
+      confirmCancel.removeEventListener("click", cancel);
     }
     confirmOk.addEventListener("click", ok);
-    confirmCancel.addEventListener("click", no);
+    confirmCancel.addEventListener("click", cancel);
   });
 }
 
 function renderMarkdown(text) {
-  return typeof marked !== "undefined" ? marked.parse(text ?? "") : `<pre>${escHtml(text)}</pre>`;
+  if (typeof marked === "undefined") return `<pre>${escHtml(text)}</pre>`;
+  // Strip raw HTML tags before parsing to prevent injection from AI content
+  const safe = (text ?? "").replace(/<[^>]*>/g, "");
+  return marked.parse(safe);
 }
 
 // ── Auth ──────────────────────────────────────────────────────
@@ -181,7 +203,8 @@ function showApp() {
 document.querySelectorAll(".auth-tab").forEach((tab) => {
   tab.addEventListener("click", () => {
     state.authMode = tab.dataset.tab;
-    document.querySelectorAll(".auth-tab").forEach((t) => t.classList.toggle("active", t === tab));
+    document.querySelectorAll(".auth-tab").forEach((t) =>
+      t.classList.toggle("active", t === tab));
     authSubmit.textContent = state.authMode === "signin" ? "Sign In" : "Sign Up";
     authError.classList.add("hidden");
   });
@@ -231,7 +254,10 @@ function closeSidebar() { sidebar.classList.remove("open"); sidebarOverlay.class
 sidebarToggle?.addEventListener("click", openSidebar);
 sidebarClose?.addEventListener("click", closeSidebar);
 sidebarOverlay?.addEventListener("click", closeSidebar);
-searchToggleBtn?.addEventListener("click", () => { openSidebar(); setTimeout(() => searchInput?.focus(), 200); });
+searchToggleBtn?.addEventListener("click", () => {
+  openSidebar();
+  setTimeout(() => searchInput?.focus(), 200);
+});
 cameraNavBtn?.addEventListener("click", () => cameraInput?.click());
 
 // ── Navigation ────────────────────────────────────────────────
@@ -265,7 +291,8 @@ async function openProfileModal() {
 profileBtn?.addEventListener("click", openProfileModal);
 profileNavBtn?.addEventListener("click", openProfileModal);
 profileModalClose?.addEventListener("click", () => profileModal.classList.add("hidden"));
-profileModal?.querySelector(".modal-backdrop")?.addEventListener("click", () => profileModal.classList.add("hidden"));
+profileModal?.querySelector(".modal-backdrop")?.addEventListener("click", () =>
+  profileModal.classList.add("hidden"));
 
 themeToggle?.addEventListener("change", () => {
   const dark = themeToggle.checked;
@@ -281,7 +308,10 @@ signoutBtn?.addEventListener("click", async () => {
 
 saveProfileBtn?.addEventListener("click", async () => {
   try {
-    await DB.updateProfile({ display_name: profileNameInput.value.trim() || null, model: modelSelect.value });
+    await DB.updateProfile({
+      display_name: profileNameInput.value.trim() || null,
+      model:        modelSelect.value,
+    });
     toast("Settings saved", "success");
     profileModal.classList.add("hidden");
   } catch (err) {
@@ -292,8 +322,13 @@ saveProfileBtn?.addEventListener("click", async () => {
 exportAllBtn?.addEventListener("click", async () => {
   const data = await DB.exportAll();
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-  const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: `paperbrain-${Date.now()}.json` });
+  const url  = URL.createObjectURL(blob);
+  const a    = Object.assign(document.createElement("a"), {
+    href:     url,
+    download: `paperbrain-${Date.now()}.json`,
+  });
   a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
 });
 
 // ── Notes list ────────────────────────────────────────────────
@@ -302,6 +337,7 @@ async function loadNotes(query) {
   try {
     state.notes = query ? await DB.searchNotes(query) : await DB.getAllNotes();
     renderNotesList();
+    state.mindmapStale = true;
   } catch (err) {
     console.error(err);
     toast("Failed to load notes", "error");
@@ -312,15 +348,16 @@ function renderNotesList() {
   const html = state.notes.length
     ? state.notes.map(noteCardHTML).join("")
     : `<p style="padding:16px;color:var(--text-muted);font-size:14px;">No notes yet. Upload your first handwritten page!</p>`;
-  notesList.innerHTML = html;
-  notesListMobile.innerHTML = html;
+  notesList.innerHTML        = html;
+  notesListMobile.innerHTML  = html;
   document.querySelectorAll(".note-card").forEach((el) => {
     el.addEventListener("click", () => openNote(el.dataset.id));
   });
 }
 
 function noteCardHTML(note) {
-  const tags = (note.tags ?? []).map((t) => `<span class="tag-chip">${escHtml(t)}</span>`).join("");
+  const tags = (note.tags ?? [])
+    .map((t) => `<span class="tag-chip">${escHtml(t)}</span>`).join("");
   return `<div class="note-card" data-id="${note.id}">
     <div class="note-card-title">${escHtml(note.title ?? "Untitled")}</div>
     <div class="note-card-meta">${fmtDate(note.created_at)}</div>
@@ -340,9 +377,9 @@ searchInput?.addEventListener("input", () => {
 async function openNote(id) {
   try {
     const note = await DB.getNote(id);
-    state.currentNote = note;
+    state.currentNote      = note;
     state.currentImageUrls = await DB.getNoteImageUrls(id);
-    state.editMode = false;
+    state.editMode         = false;
     renderNoteModal(note);
     noteModal.classList.remove("hidden");
     loadRelations(id);
@@ -352,14 +389,14 @@ async function openNote(id) {
 }
 
 function renderNoteModal(note) {
-  noteTitle.textContent = note.title ?? "Untitled";
-  noteTitle.contentEditable = "false";
-  noteMetaEl.textContent = fmtDate(note.created_at);
+  noteTitle.textContent       = note.title ?? "Untitled";
+  noteTitle.contentEditable   = "false";
+  noteMetaEl.textContent      = fmtDate(note.created_at);
 
-  organizedView.innerHTML     = renderMarkdown(note.organized);
-  transcriptionView.innerHTML = `<pre>${escHtml(note.transcription)}</pre>`;
-  summaryView.innerHTML       = renderMarkdown(note.summary);
-  keyPointsView.innerHTML     = (note.key_points ?? [])
+  organizedView.innerHTML      = renderMarkdown(note.organized);
+  transcriptionView.innerHTML  = `<pre>${escHtml(note.transcription)}</pre>`;
+  summaryView.innerHTML        = renderMarkdown(note.summary);
+  keyPointsView.innerHTML      = (note.key_points ?? [])
     .map((p) => `<div class="key-point-item">${escHtml(p)}</div>`).join("");
 
   renderTags(note.tags ?? []);
@@ -367,7 +404,6 @@ function renderNoteModal(note) {
   setEditMode(false);
   switchTab("organized");
 
-  // Reset annotate
   destroyAnnotateEngine();
   annotateToggleBtn.classList.remove("hidden");
 }
@@ -376,12 +412,12 @@ function renderImages() {
   noteImagesWrap.innerHTML = "";
   state.currentImageUrls.forEach((url, i) => {
     const container = document.createElement("div");
-    container.className = "note-image-container";
+    container.className  = "note-image-container";
     container.dataset.idx = i;
 
-    const img = document.createElement("img");
-    img.src = url;
-    img.alt = `Page ${i + 1}`;
+    const img   = document.createElement("img");
+    img.src     = url;
+    img.alt     = `Page ${i + 1}`;
     img.loading = "lazy";
     img.addEventListener("click", () => {
       if (!state.annotateEngine) {
@@ -398,16 +434,19 @@ function renderImages() {
 // ── Tabs ──────────────────────────────────────────────────────
 
 function switchTab(name) {
-  document.querySelectorAll(".tab-btn").forEach((btn) => btn.classList.toggle("active", btn.dataset.tab === name));
+  document.querySelectorAll(".tab-btn").forEach((btn) =>
+    btn.classList.toggle("active", btn.dataset.tab === name));
   document.querySelectorAll(".tab-panel").forEach((panel) => {
     panel.classList.toggle("active", panel.id === `tab-${name}`);
     panel.classList.toggle("hidden", panel.id !== `tab-${name}`);
   });
 }
 
-document.querySelectorAll(".tab-btn").forEach((btn) => btn.addEventListener("click", () => switchTab(btn.dataset.tab)));
+document.querySelectorAll(".tab-btn").forEach((btn) =>
+  btn.addEventListener("click", () => switchTab(btn.dataset.tab)));
 noteModalClose?.addEventListener("click", () => noteModal.classList.add("hidden"));
-noteModal?.querySelector(".modal-backdrop")?.addEventListener("click", () => noteModal.classList.add("hidden"));
+noteModal?.querySelector(".modal-backdrop")?.addEventListener("click", () =>
+  noteModal.classList.add("hidden"));
 
 // ── Edit mode ─────────────────────────────────────────────────
 
@@ -422,10 +461,10 @@ function setEditMode(on) {
 
   if (on) {
     state.editOriginals = {
-      organized:     state.currentNote.organized ?? "",
+      organized:     state.currentNote.organized     ?? "",
       transcription: state.currentNote.transcription ?? "",
     };
-    organizedEdit.value     = state.currentNote.organized ?? "";
+    organizedEdit.value     = state.currentNote.organized     ?? "";
     transcriptionEdit.value = state.currentNote.transcription ?? "";
   }
 }
@@ -434,7 +473,7 @@ editModeBtn?.addEventListener("click", () => setEditMode(!state.editMode));
 cancelEditBtn?.addEventListener("click", () => setEditMode(false));
 
 saveEditBtn?.addEventListener("click", async () => {
-  const note = state.currentNote;
+  const note      = state.currentNote;
   const newOrg    = organizedEdit.value;
   const newTrans  = transcriptionEdit.value;
   const corrections = diffText(state.editOriginals.transcription, newTrans);
@@ -442,7 +481,7 @@ saveEditBtn?.addEventListener("click", async () => {
   try {
     const updated = await DB.saveNote(note.id, { organized: newOrg, transcription: newTrans });
     state.currentNote = updated;
-    organizedView.innerHTML = renderMarkdown(newOrg);
+    organizedView.innerHTML     = renderMarkdown(newOrg);
     transcriptionView.innerHTML = `<pre>${escHtml(newTrans)}</pre>`;
     setEditMode(false);
     toast("Saved", "success");
@@ -450,7 +489,9 @@ saveEditBtn?.addEventListener("click", async () => {
 
     if (corrections.length) {
       API.learnHandwriting({ noteId: note.id, corrections })
-        .then((res) => { if (res.synthesized) toast("AI updated your handwriting profile", "success"); })
+        .then((res) => {
+          if (res.synthesized) toast("AI updated your handwriting profile", "success");
+        })
         .catch(() => {});
     }
   } catch (err) {
@@ -458,21 +499,43 @@ saveEditBtn?.addEventListener("click", async () => {
   }
 });
 
+/**
+ * Word-level diff that filters out likely-insertion false positives using
+ * edit distance: only records a correction if the two words are similar
+ * (edit distance ≤ 40% of the original word length, min 2).
+ */
 function diffText(original, edited) {
   if (original === edited) return [];
-  const orig = original.split(/\s+/);
-  const edit = edited.split(/\s+/);
+  const orig = original.split(/\s+/).filter(Boolean);
+  const edit = edited.split(/\s+/).filter(Boolean);
   const corrections = [];
   const len = Math.min(orig.length, edit.length);
   for (let i = 0; i < len; i++) {
-    if (orig[i] !== edit[i] && orig[i] && edit[i]) {
-      corrections.push({
-        original:   orig[i].replace(/[^\w'-]/g, ""),
-        correction: edit[i].replace(/[^\w'-]/g, ""),
-      });
+    const o = orig[i].replace(/[^\w'-]/g, "");
+    const e = edit[i].replace(/[^\w'-]/g, "");
+    if (o && e && o !== e) {
+      const threshold = Math.max(2, Math.floor(o.length * 0.4));
+      if (_editDistance(o.toLowerCase(), e.toLowerCase()) <= threshold) {
+        corrections.push({ original: o, correction: e });
+      }
     }
   }
   return corrections.slice(0, 20);
+}
+
+function _editDistance(a, b) {
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m + 1 }, (_, i) =>
+    Array.from({ length: n + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)),
+  );
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return dp[m][n];
 }
 
 // ── Title editing ─────────────────────────────────────────────
@@ -482,7 +545,11 @@ editTitleBtn?.addEventListener("click", () => {
   if (editing) {
     const newTitle = noteTitle.textContent.trim() || "Untitled";
     DB.saveNote(state.currentNote.id, { title: newTitle })
-      .then(() => { state.currentNote.title = newTitle; loadNotes(); toast("Title updated", "success"); })
+      .then(() => {
+        state.currentNote.title = newTitle;
+        loadNotes();
+        toast("Title updated", "success");
+      })
       .catch((err) => toast(err.message, "error"));
     noteTitle.contentEditable = "false";
     editTitleBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 20 20" fill="currentColor"><path d="M13.586 3.586a2 2 0 112.828 2.828L7.07 15.757l-3.535.707.707-3.535L13.586 3.586z"/></svg>`;
@@ -497,17 +564,16 @@ editTitleBtn?.addEventListener("click", () => {
 
 function renderTags(tags) {
   noteTagsEl.innerHTML = tags.map((t) =>
-    `<span class="tag-chip">${escHtml(t)}<span class="tag-remove" data-tag="${escHtml(t)}">×</span></span>`
+    `<span class="tag-chip">${escHtml(t)}<span class="tag-remove" data-tag="${escHtml(t)}">×</span></span>`,
   ).join("");
   noteTagsEl.querySelectorAll(".tag-remove").forEach((btn) =>
-    btn.addEventListener("click", () => removeTag(btn.dataset.tag))
-  );
+    btn.addEventListener("click", () => removeTag(btn.dataset.tag)));
 }
 
 async function addTag(tag) {
   tag = tag.trim().toLowerCase().replace(/\s+/g, "-");
   if (!tag || !state.currentNote) return;
-  const tags = [...new Set([...(state.currentNote.tags ?? []), tag])];
+  const tags    = [...new Set([...(state.currentNote.tags ?? []), tag])];
   const updated = await DB.saveNote(state.currentNote.id, { tags });
   state.currentNote = updated;
   renderTags(updated.tags);
@@ -516,7 +582,7 @@ async function addTag(tag) {
 
 async function removeTag(tag) {
   if (!state.currentNote) return;
-  const tags = (state.currentNote.tags ?? []).filter((t) => t !== tag);
+  const tags    = (state.currentNote.tags ?? []).filter((t) => t !== tag);
   const updated = await DB.saveNote(state.currentNote.id, { tags });
   state.currentNote = updated;
   renderTags(updated.tags);
@@ -524,7 +590,9 @@ async function removeTag(tag) {
 }
 
 tagAddBtn?.addEventListener("click", () => { addTag(tagInput.value); tagInput.value = ""; });
-tagInput?.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addTag(tagInput.value); tagInput.value = ""; } });
+tagInput?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); addTag(tagInput.value); tagInput.value = ""; }
+});
 
 // ── Relations ─────────────────────────────────────────────────
 
@@ -544,7 +612,10 @@ async function loadRelations(noteId) {
       : `<p style="font-size:13px;color:var(--text-muted)">No related notes yet.</p>`;
 
     relationsListEl.querySelectorAll(".relation-chip[data-id]").forEach((el) => {
-      el.addEventListener("click", () => { noteModal.classList.add("hidden"); openNote(el.dataset.id); });
+      el.addEventListener("click", () => {
+        noteModal.classList.add("hidden");
+        openNote(el.dataset.id);
+      });
     });
   } catch (_) {}
 }
@@ -552,24 +623,29 @@ async function loadRelations(noteId) {
 // ── Delete ────────────────────────────────────────────────────
 
 deleteNoteBtn?.addEventListener("click", async () => {
-  const ok = await confirm(`Delete "${state.currentNote?.title ?? "this note"}"? This cannot be undone.`);
+  const ok = await showConfirm(
+    `Delete "${state.currentNote?.title ?? "this note"}"? This cannot be undone.`,
+  );
   if (!ok) return;
   try {
     await DB.deleteNote(state.currentNote.id);
     noteModal.classList.add("hidden");
     toast("Note deleted", "success");
     loadNotes();
-  } catch (err) { toast("Delete failed: " + err.message, "error"); }
+  } catch (err) {
+    toast("Delete failed: " + err.message, "error");
+  }
 });
 
 // ── Re-process ────────────────────────────────────────────────
 
 reprocessBtn?.addEventListener("click", async () => {
   if (!state.currentNote || !state.currentImageUrls.length) return;
-  reprocessBtn.disabled = true; reprocessBtn.textContent = "Processing…";
+  reprocessBtn.disabled  = true;
+  reprocessBtn.textContent = "Processing…";
   try {
     const dataUrls = await Promise.all(state.currentImageUrls.map(fetchAsDataUrl));
-    const result = await API.processNote(dataUrls);
+    const result   = await API.processNote(dataUrls);
     if (result?.ok && result.note) {
       state.currentNote = result.note;
       renderNoteModal(result.note);
@@ -577,16 +653,22 @@ reprocessBtn?.addEventListener("click", async () => {
       toast("Re-processed", "success");
       triggerClarificationPopup(result.note);
     }
-  } catch (err) { toast("Re-process failed: " + err.message, "error"); }
-  finally { reprocessBtn.disabled = false; reprocessBtn.textContent = "Re-process"; }
+  } catch (err) {
+    toast("Re-process failed: " + err.message, "error");
+  } finally {
+    reprocessBtn.disabled    = false;
+    reprocessBtn.textContent = "Re-process";
+  }
 });
 
 async function fetchAsDataUrl(url) {
   const res = await fetch(url);
+  if (!res.ok) throw new Error(`Failed to fetch image: ${res.status}`);
   const blob = await res.blob();
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = (e) => resolve(e.target.result);
+    reader.onload  = (e) => resolve(e.target.result);
+    reader.onerror = () => reject(new Error("Failed to read image"));
     reader.readAsDataURL(blob);
   });
 }
@@ -594,13 +676,16 @@ async function fetchAsDataUrl(url) {
 // ── Export markdown ───────────────────────────────────────────
 
 exportMdBtn?.addEventListener("click", () => {
-  const n = state.currentNote; if (!n) return;
-  const md = `# ${n.title}\n\n## Summary\n${n.summary}\n\n## Organized\n${n.organized}\n\n## Transcription\n${n.transcription}\n`;
-  const a = Object.assign(document.createElement("a"), {
-    href: URL.createObjectURL(new Blob([md], { type: "text/markdown" })),
+  const n = state.currentNote;
+  if (!n) return;
+  const md  = `# ${n.title}\n\n## Summary\n${n.summary}\n\n## Organized\n${n.organized}\n\n## Transcription\n${n.transcription}\n`;
+  const url = URL.createObjectURL(new Blob([md], { type: "text/markdown" }));
+  const a   = Object.assign(document.createElement("a"), {
+    href:     url,
     download: `${(n.title ?? "note").replace(/[^a-z0-9]/gi, "_")}.md`,
   });
   a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
 });
 
 // ── ANNOTATION ────────────────────────────────────────────────
@@ -611,13 +696,8 @@ function destroyAnnotateEngine() {
   $("annotate-fullscreen")?.classList.add("hidden");
 }
 
-annotateToggleBtn?.addEventListener("click", () => {
-  startAnnotateMode(0);
-});
-
-annotateDoneBtn?.addEventListener("click", () => {
-  destroyAnnotateEngine();
-});
+annotateToggleBtn?.addEventListener("click", () => startAnnotateMode(0));
+annotateDoneBtn?.addEventListener("click",   () => destroyAnnotateEngine());
 
 async function startAnnotateMode(idx) {
   destroyAnnotateEngine();
@@ -626,32 +706,30 @@ async function startAnnotateMode(idx) {
   const url = state.currentImageUrls[idx];
   if (!url) return;
 
-  // Populate fullscreen image
   const fsImg  = $("annotate-fs-img");
   const fsWrap = $("annotate-img-wrap");
   fsImg.src = url;
 
-  // Reuse or create canvas inside the image wrapper
   let canvas = fsWrap.querySelector("canvas");
   if (!canvas) {
     canvas = document.createElement("canvas");
     fsWrap.appendChild(canvas);
   }
 
-  // Show fullscreen overlay
   $("annotate-fullscreen").classList.remove("hidden");
 
   const rows = await DB.getAnnotations(state.currentNote.id);
   const tags  = state.currentNote.tags ?? [];
-  annotateTagSelect.innerHTML = `<option value="">— pick tag —</option>` +
+  annotateTagSelect.innerHTML =
+    `<option value="">— pick tag —</option>` +
     tags.map((t) => `<option value="${escHtml(t)}">${escHtml(t)}</option>`).join("");
 
   state.annotateEngine = new AnnotationEngine(canvas, fsImg, {
-    onSave: (ann) => DB.saveAnnotation({ ...ann, note_id: state.currentNote.id, image_index: idx }),
-    onDelete: (id) => DB.deleteAnnotation(id),
+    onSave:   (ann) => DB.saveAnnotation({ ...ann, note_id: state.currentNote.id, image_index: idx }),
+    onDelete: (id)  => DB.deleteAnnotation(id),
     onSelect: (ann) => {
       const sel = ann !== null;
-      annotateDeleteBtn.disabled = !sel;
+      annotateDeleteBtn.disabled    = !sel;
       annotateReprocessBtn.disabled = !sel;
     },
   });
@@ -666,40 +744,59 @@ document.querySelectorAll(".tool-btn").forEach((btn) => {
   });
 });
 
-annotateTagSelect?.addEventListener("change", () => { state.annotateEngine?.setTag(annotateTagSelect.value); });
-annotateTagNew?.addEventListener("input", () => { if (annotateTagNew.value.trim()) state.annotateEngine?.setTag(annotateTagNew.value.trim()); });
-annotateDeleteBtn?.addEventListener("click", () => { state.annotateEngine?.deleteSelected(); annotateDeleteBtn.disabled = true; annotateReprocessBtn.disabled = true; });
+annotateTagSelect?.addEventListener("change", () =>
+  state.annotateEngine?.setTag(annotateTagSelect.value));
+annotateTagNew?.addEventListener("input", () => {
+  if (annotateTagNew.value.trim()) state.annotateEngine?.setTag(annotateTagNew.value.trim());
+});
+annotateDeleteBtn?.addEventListener("click", () => {
+  state.annotateEngine?.deleteSelected();
+  annotateDeleteBtn.disabled    = true;
+  annotateReprocessBtn.disabled = true;
+});
 
 annotateReprocessBtn?.addEventListener("click", async () => {
   if (!state.annotateEngine) return;
-  const url = state.currentImageUrls[state.currentAnnotateIdx];
+  const url     = state.currentImageUrls[state.currentAnnotateIdx];
   const cropped = await state.annotateEngine.cropSelected(url);
   if (!cropped) return;
   const tag = annotateTagSelect.value || annotateTagNew.value.trim() || "region";
-  annotateReprocessBtn.disabled = true;
+  annotateReprocessBtn.disabled    = true;
   annotateReprocessBtn.textContent = "Processing…";
   try {
-    const result = await API.processRegion({ imageDataUrl: cropped, tag, noteId: state.currentNote.id });
+    const result = await API.processRegion({
+      imageDataUrl: cropped,
+      tag,
+      noteId: state.currentNote.id,
+    });
     if (result?.ok && result.region) {
-      const existing = state.currentNote.organized ?? "";
+      const existing   = state.currentNote.organized ?? "";
       const newContent = `${existing}\n\n## Region: ${tag}\n${result.region.content}`;
-      const updated = await DB.saveNote(state.currentNote.id, { organized: newContent });
-      state.currentNote = updated;
-      organizedView.innerHTML = renderMarkdown(newContent);
+      const updated    = await DB.saveNote(state.currentNote.id, { organized: newContent });
+      state.currentNote             = updated;
+      organizedView.innerHTML       = renderMarkdown(newContent);
       toast(`Region "${tag}" processed`, "success");
     }
-  } catch (err) { toast("Region failed: " + err.message, "error"); }
-  finally { annotateReprocessBtn.disabled = false; annotateReprocessBtn.textContent = "Re-process region"; }
+  } catch (err) {
+    toast("Region failed: " + err.message, "error");
+  } finally {
+    annotateReprocessBtn.disabled    = false;
+    annotateReprocessBtn.textContent = "Re-process region";
+  }
 });
 
 // ── FILE UPLOAD ───────────────────────────────────────────────
 
-uploadZone?.addEventListener("click", (e) => { if (!e.target.closest("label")) fileInput?.click(); });
-uploadZone?.addEventListener("dragover",  (e) => { e.preventDefault(); uploadZone.classList.add("drag-over"); });
+uploadZone?.addEventListener("click",    (e) => { if (!e.target.closest("label")) fileInput?.click(); });
+uploadZone?.addEventListener("dragover", (e) => { e.preventDefault(); uploadZone.classList.add("drag-over"); });
 uploadZone?.addEventListener("dragleave", ()  => uploadZone.classList.remove("drag-over"));
-uploadZone?.addEventListener("drop",      (e) => { e.preventDefault(); uploadZone.classList.remove("drag-over"); handleFiles([...e.dataTransfer.files]); });
-fileInput?.addEventListener("change",   () => { handleFiles([...fileInput.files]); fileInput.value = ""; });
-cameraInput?.addEventListener("change", () => { handleFiles([...cameraInput.files]); cameraInput.value = ""; });
+uploadZone?.addEventListener("drop",     (e) => {
+  e.preventDefault();
+  uploadZone.classList.remove("drag-over");
+  handleFiles([...e.dataTransfer.files]);
+});
+fileInput?.addEventListener("change",  () => { handleFiles([...fileInput.files]);  fileInput.value  = ""; });
+cameraInput?.addEventListener("change",() => { handleFiles([...cameraInput.files]); cameraInput.value = ""; });
 
 async function handleFiles(files) {
   if (!files.length) return;
@@ -715,7 +812,8 @@ async function handleFiles(files) {
 
 async function processJob(jobId, file, type) {
   const item = document.createElement("div");
-  item.className = "queue-item"; item.id = `job-${jobId}`;
+  item.className = "queue-item";
+  item.id        = `job-${jobId}`;
   item.innerHTML = `
     <div class="queue-item-header">
       <span class="queue-filename">${escHtml(file.name)}</span>
@@ -725,8 +823,8 @@ async function processJob(jobId, file, type) {
   queue.appendChild(item);
 
   const setStatus = (msg, pct) => {
-    item.querySelector(".queue-status").textContent = msg;
-    item.querySelector(".queue-bar-fill").style.width = pct + "%";
+    item.querySelector(".queue-status").textContent       = msg;
+    item.querySelector(".queue-bar-fill").style.width     = pct + "%";
   };
 
   try {
@@ -767,10 +865,11 @@ async function renderPDF(file) {
   const pdf    = await pdfjsLib.getDocument({ data: buffer }).promise;
   const images = [];
   for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i);
-    const vp   = page.getViewport({ scale: 2 });
+    const page   = await pdf.getPage(i);
+    const vp     = page.getViewport({ scale: 2 });
     const canvas = document.createElement("canvas");
-    canvas.width = vp.width; canvas.height = vp.height;
+    canvas.width  = vp.width;
+    canvas.height = vp.height;
     await page.render({ canvasContext: canvas.getContext("2d"), viewport: vp }).promise;
     images.push(canvas.toDataURL("image/jpeg", 0.88));
   }
@@ -789,7 +888,6 @@ async function triggerClarificationPopup(note) {
   }
   if (!matches.length) return;
 
-  // Show note image as context if available
   const clarifyImageContext = $("clarify-image-context");
   const clarifyNoteImg      = $("clarify-note-img");
   if (clarifyImageContext && clarifyNoteImg && state.currentImageUrls?.[0]) {
@@ -800,8 +898,8 @@ async function triggerClarificationPopup(note) {
   }
 
   clarifyItems.innerHTML = "";
-  clarifyModal._noteId = note.id;
-  clarifyModal._inputs = [];
+  state.clarifyNoteId    = note.id;
+  state.clarifyInputs    = [];
 
   matches.slice(0, 5).forEach((match) => {
     const ctx = `${match.before}[unclear]${match.after}`.trim();
@@ -813,7 +911,7 @@ async function triggerClarificationPopup(note) {
         <input class="clarify-input" type="text" placeholder="What does the unclear word say?" />
       </div>`;
     clarifyItems.appendChild(div);
-    clarifyModal._inputs.push({ input: div.querySelector(".clarify-input"), context: ctx });
+    state.clarifyInputs.push({ input: div.querySelector(".clarify-input"), context: ctx });
   });
 
   clarifyModal.classList.remove("hidden");
@@ -821,18 +919,19 @@ async function triggerClarificationPopup(note) {
 
 clarifyClose?.addEventListener("click", () => clarifyModal.classList.add("hidden"));
 clarifySkip?.addEventListener("click",  () => clarifyModal.classList.add("hidden"));
-clarifyModal?.querySelector(".modal-backdrop")?.addEventListener("click", () => clarifyModal.classList.add("hidden"));
+clarifyModal?.querySelector(".modal-backdrop")?.addEventListener("click", () =>
+  clarifyModal.classList.add("hidden"));
 
 clarifySubmit?.addEventListener("click", async () => {
-  const noteId = clarifyModal._noteId;
-  const inputs = clarifyModal._inputs ?? [];
-  const corrections = inputs
+  const noteId      = state.clarifyNoteId;
+  const corrections = state.clarifyInputs
     .map((item) => ({ original: "[unclear]", correction: item.input.value.trim(), context: item.context }))
     .filter((c) => c.correction);
 
   if (!corrections.length) { clarifyModal.classList.add("hidden"); return; }
 
-  clarifySubmit.disabled = true; clarifySubmit.textContent = "Learning…";
+  clarifySubmit.disabled    = true;
+  clarifySubmit.textContent = "Learning…";
   try {
     const res = await API.learnHandwriting({ noteId, corrections });
     clarifyModal.classList.add("hidden");
@@ -840,54 +939,159 @@ clarifySubmit?.addEventListener("click", async () => {
   } catch (err) {
     toast("Failed: " + err.message, "error");
   } finally {
-    clarifySubmit.disabled = false; clarifySubmit.textContent = "Submit & Learn";
+    clarifySubmit.disabled    = false;
+    clarifySubmit.textContent = "Submit & Learn";
   }
 });
 
 // ── MIND MAP ──────────────────────────────────────────────────
 
-async function loadMindMap() {
+async function loadMindMap(force = false) {
+  if (!state.mindmapStale && !force && state.mindmap) return;
   try {
     const [notes, relations, positions] = await Promise.all([
       DB.getAllNotes(), DB.getAllRelations(), DB.getMindmapPositions(),
     ]);
+
     if (!state.mindmap) {
       state.mindmap = new MindMap("#mindmap-svg", {
         onOpenNote: (id) => { switchView("notes"); openNote(id); },
         onSavePosition: (pos) => DB.saveMindmapPosition(pos).catch(() => {}),
+        onCreateRelation: async ({ fromId, toId }) => {
+          try {
+            await DB.saveRelation({ fromId, toId, reason: "Manual connection", score: 1.0 });
+            toast("Connection created", "success");
+            loadMindMap(true);
+          } catch (err) {
+            toast("Failed to create connection: " + err.message, "error");
+          }
+        },
       });
     }
+
     state.mindmap.load(notes, relations, positions);
-  } catch (err) { toast("Mind map error: " + err.message, "error"); }
+    state.mindmapStale = false;
+    updateMapStats();
+  } catch (err) {
+    toast("Mind map error: " + err.message, "error");
+  }
 }
 
-mapResetBtn?.addEventListener("click", () => state.mindmap?.resetLayout());
+function updateMapStats() {
+  if (!state.mindmap || !mapStats) return;
+  const { notes, tags, links } = state.mindmap.getStats();
+  mapStats.textContent = `${notes} note${notes !== 1 ? "s" : ""} · ${tags} tag${tags !== 1 ? "s" : ""} · ${links} connection${links !== 1 ? "s" : ""}`;
+}
+
+mapResetBtn?.addEventListener("click", () => {
+  state.mindmap?.resetLayout();
+  updateMapStats();
+});
+
 mapTagLinksBtn?.addEventListener("click", () => state.mindmap?.toggleTagLinks());
 
-let _mapFilter;
+mapAddRelation?.addEventListener("click", () => {
+  if (!state.mindmap) return;
+  const active = state.mindmap.toggleRelationMode();
+  mapAddRelation.classList.toggle("active", active);
+  mapRelationHint?.classList.toggle("hidden", !active);
+});
+
+mapZoomIn?.addEventListener("click",  () => state.mindmap?.zoomIn());
+mapZoomOut?.addEventListener("click", () => state.mindmap?.zoomOut());
+mapFit?.addEventListener("click",     () => state.mindmap?.fitView());
+
+mapExport?.addEventListener("click", () => {
+  if (!state.mindmap) return;
+  state.mindmap.exportSvg();
+});
+
+let _mapFilterTimer;
 mapFilter?.addEventListener("input", () => {
-  clearTimeout(_mapFilter);
-  _mapFilter = setTimeout(() => state.mindmap?.filterByTag(mapFilter.value.trim() || null), 300);
+  clearTimeout(_mapFilterTimer);
+  _mapFilterTimer = setTimeout(
+    () => state.mindmap?.filterByTag(mapFilter.value.trim() || null),
+    250,
+  );
 });
 
 // ── LIGHTBOX ──────────────────────────────────────────────────
 
 lightboxClose?.addEventListener("click", () => lightbox.classList.add("hidden"));
-lightbox?.addEventListener("click", (e) => { if (e.target === lightbox) lightbox.classList.add("hidden"); });
+lightbox?.addEventListener("click", (e) => {
+  if (e.target === lightbox) lightbox.classList.add("hidden");
+});
+
+// ── KEYBOARD SHORTCUTS ────────────────────────────────────────
+
+document.addEventListener("keydown", (e) => {
+  // Escape: close top-most open modal / exit annotation mode / cancel relation mode
+  if (e.key === "Escape") {
+    if (!$("annotate-fullscreen")?.classList.contains("hidden")) {
+      destroyAnnotateEngine(); return;
+    }
+    if (state.mindmap && mapAddRelation?.classList.contains("active")) {
+      mapAddRelation.click(); return;
+    }
+    if (!lightbox?.classList.contains("hidden"))       { lightbox.classList.add("hidden"); return; }
+    if (!clarifyModal?.classList.contains("hidden"))   { clarifyModal.classList.add("hidden"); return; }
+    if (!noteModal?.classList.contains("hidden"))      { noteModal.classList.add("hidden"); return; }
+    if (!profileModal?.classList.contains("hidden"))   { profileModal.classList.add("hidden"); return; }
+    if (!confirmDialog?.classList.contains("hidden"))  { confirmDialog.classList.add("hidden"); return; }
+    return;
+  }
+
+  // "/" to focus search (when no modal is open and not in an input)
+  if (e.key === "/" && !_isInputFocused()) {
+    e.preventDefault();
+    openSidebar();
+    setTimeout(() => searchInput?.focus(), 200);
+    return;
+  }
+
+  // Annotation keyboard shortcuts (only when annotation mode is active)
+  if (!$("annotate-fullscreen")?.classList.contains("hidden") && !_isInputFocused()) {
+    const toolMap = { r: "rect", e: "ellipse", f: "freehand" };
+    const tool = toolMap[e.key.toLowerCase()];
+    if (tool) {
+      document.querySelectorAll(".tool-btn").forEach((b) => {
+        b.classList.toggle("active", b.dataset.tool === tool);
+      });
+      state.annotateEngine?.setTool(tool);
+      return;
+    }
+    if ((e.key === "Delete" || e.key === "Backspace") && !_isInputFocused()) {
+      state.annotateEngine?.deleteSelected();
+      annotateDeleteBtn.disabled    = true;
+      annotateReprocessBtn.disabled = true;
+      return;
+    }
+  }
+
+  // Mind map shortcuts (when map view is active)
+  if (viewMap?.style.display !== "none" && !_isInputFocused()) {
+    if (e.key === "+" || e.key === "=") { state.mindmap?.zoomIn();   return; }
+    if (e.key === "-")                  { state.mindmap?.zoomOut();  return; }
+    if (e.key === "0")                  { state.mindmap?.fitView();  return; }
+  }
+});
+
+function _isInputFocused() {
+  const el = document.activeElement;
+  return el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT"
+    || el.contentEditable === "true");
+}
 
 // ── INIT ──────────────────────────────────────────────────────
 
 async function init() {
-  // Theme
   const dark = (localStorage.getItem("pb_theme") ?? "dark") === "dark";
   document.body.className = dark ? "theme-dark" : "theme-light";
   if (themeToggle) themeToggle.checked = dark;
 
-  // Initial view state
   viewNotes.style.display = "flex";
   viewMap.style.display   = "none";
 
-  // Auth
   const user = await Auth.init();
   Auth.onAuthChange((u) => { if (u) showApp(); else showAuth(); });
   if (user) showApp(); else showAuth();

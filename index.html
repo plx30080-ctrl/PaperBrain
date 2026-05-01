@@ -168,9 +168,24 @@
     <!-- Mind map view -->
     <section id="view-map" class="view">
       <div class="map-toolbar">
-        <button class="btn-sm btn-outline" id="map-reset">Reset Layout</button>
-        <button class="btn-sm btn-outline" id="map-tag-links">Tag Links</button>
-        <input type="search" id="map-filter" placeholder="Filter by tag…" class="map-filter-input" />
+        <div class="map-toolbar-left">
+          <button class="btn-sm btn-outline" id="map-reset" title="Reset node layout">Reset</button>
+          <button class="btn-sm btn-outline" id="map-tag-links" title="Toggle tag connections">Tags</button>
+          <button class="btn-sm btn-outline" id="map-add-relation" title="Draw a connection between two notes">+ Relation</button>
+          <div class="map-zoom-group">
+            <button class="icon-btn map-zoom-btn" id="map-zoom-out" title="Zoom out">−</button>
+            <button class="icon-btn map-zoom-btn" id="map-zoom-in"  title="Zoom in">+</button>
+            <button class="icon-btn map-zoom-btn" id="map-fit"      title="Fit to view">⊡</button>
+          </div>
+          <button class="btn-sm btn-outline" id="map-export" title="Export as SVG">Export SVG</button>
+        </div>
+        <div class="map-toolbar-right">
+          <span id="map-stats" class="map-stats"></span>
+          <input type="search" id="map-filter" placeholder="Filter by tag…" class="map-filter-input" />
+        </div>
+      </div>
+      <div id="map-relation-hint" class="map-relation-hint hidden">
+        Click a <strong>note</strong> to start a connection, then click another note to link them. Press <kbd>Esc</kbd> to cancel.
       </div>
       <svg id="mindmap-svg" class="mindmap-svg"></svg>
     </section>
@@ -426,7 +441,7 @@
   <div class="modal-panel confirm-panel">
     <p id="confirm-msg" class="confirm-msg"></p>
     <div class="confirm-actions">
-      <button class="btn-danger"  id="confirm-ok">Delete</button>
+      <button class="btn-danger"  id="confirm-ok">Confirm</button>
       <button class="btn-outline" id="confirm-cancel">Cancel</button>
     </div>
   </div>

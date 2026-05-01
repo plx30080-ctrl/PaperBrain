@@ -53,7 +53,7 @@ function safeJsonParse(text) {
 
 /** Resize an image data-URL so neither dimension exceeds maxPx. */
 export function resizeImage(dataUrl, maxPx = 1568) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
       const scale = Math.min(1, maxPx / Math.max(img.width, img.height));
@@ -65,6 +65,7 @@ export function resizeImage(dataUrl, maxPx = 1568) {
       canvas.getContext("2d").drawImage(img, 0, 0, w, h);
       resolve(canvas.toDataURL("image/jpeg", 0.88));
     };
+    img.onerror = () => reject(new Error("Failed to load image for resizing"));
     img.src = dataUrl;
   });
 }
@@ -84,7 +85,7 @@ export function fileToDataUrl(file) {
  * rect: { x, y, w, h } — all values 0-1 (normalized).
  */
 export function cropImage(dataUrl, rect) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
       const canvas = document.createElement("canvas");
@@ -105,6 +106,7 @@ export function cropImage(dataUrl, rect) {
       );
       resolve(canvas.toDataURL("image/jpeg", 0.88));
     };
+    img.onerror = () => reject(new Error("Failed to load image for cropping"));
     img.src = dataUrl;
   });
 }

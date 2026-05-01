@@ -59,6 +59,9 @@ body { background: var(--bg); color: var(--text); }
 .hidden { display: none !important; }
 .sr-only { position: absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); }
 
+/* Visible focus ring for keyboard navigation */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 /* ── Buttons ────────────────────────────────────────────────── */
 .btn-primary {
   display: inline-flex; align-items: center; gap: 6px;
@@ -301,18 +304,63 @@ body { background: var(--bg); color: var(--text); }
 
 /* ── MIND MAP VIEW ──────────────────────────────────────────── */
 .map-toolbar {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  padding: 12px 16px; border-bottom: 1px solid var(--border);
-  background: var(--bg-card);
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; flex-wrap: wrap;
+  padding: 10px 14px; border-bottom: 1px solid var(--border);
+  background: var(--bg-card); flex-shrink: 0;
 }
+.map-toolbar-left  { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.map-toolbar-right { display: flex; align-items: center; gap: 8px; }
+
+.map-zoom-group { display: flex; gap: 2px; }
+.map-zoom-btn {
+  width: 30px; height: 30px; border-radius: 6px; font-size: 18px; font-weight: 700;
+  border: 1.5px solid var(--border); color: var(--text-muted);
+  display: flex; align-items: center; justify-content: center; line-height: 1;
+  transition: background .15s, color .15s;
+}
+.map-zoom-btn:hover { background: var(--bg-hover); color: var(--text); }
+
 .map-filter-input {
-  flex: 1; min-width: 120px; padding: 6px 10px; border-radius: 8px;
+  width: 150px; padding: 6px 10px; border-radius: 8px;
   background: var(--bg-input); border: 1.5px solid var(--border); color: var(--text); font-size: 13px;
 }
 .map-filter-input:focus { outline: none; border-color: var(--accent); }
 
-.mindmap-svg { flex: 1; display: block; width: 100%; }
+.map-stats {
+  font-size: 12px; color: var(--text-muted); white-space: nowrap;
+}
+
+/* Relation-mode active button */
+.map-add-relation.active {
+  background: var(--accent); color: #fff; border-color: var(--accent);
+}
+
+/* Relation mode instruction banner */
+.map-relation-hint {
+  padding: 8px 16px; background: #1e3050; border-bottom: 1px solid var(--accent);
+  font-size: 13px; color: #93c5fd; text-align: center;
+  flex-shrink: 0;
+}
+.map-relation-hint kbd {
+  background: rgba(255,255,255,.15); border-radius: 4px;
+  padding: 1px 5px; font-family: monospace; font-size: 12px;
+}
+
+.mindmap-svg { flex: 1; display: block; width: 100%; min-height: 0; }
 .mindmap-svg .mm-node text { user-select: none; }
+
+/* Hover tooltip */
+.mm-tooltip {
+  position: fixed; z-index: 9999; pointer-events: none;
+  max-width: 240px; padding: 8px 12px; border-radius: 8px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  box-shadow: 0 4px 20px rgba(0,0,0,.4);
+  font-size: 12px; line-height: 1.5; color: var(--text);
+}
+.mm-tooltip strong { display: block; font-size: 13px; margin-bottom: 3px; }
+.mm-tooltip span { display: block; color: var(--text-muted); }
+.mm-tooltip .mm-tooltip-tags { color: var(--accent); margin-top: 4px; font-size: 11px; }
 
 /* ── BOTTOM NAV (mobile only) ───────────────────────────────── */
 .bottom-nav {
@@ -660,9 +708,8 @@ body { background: var(--bg); color: var(--text); }
   .sidebar-overlay { display: none !important; }
 
   .sidebar {
-    position: relative; transform: none !important;
+    position: sticky; top: 0; transform: none !important;
     flex-shrink: 0; width: 280px; height: 100dvh;
-    position: sticky; top: 0;
   }
   #sidebar-close { display: none; }
 

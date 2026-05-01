@@ -204,7 +204,9 @@ export async function getProfile() {
 
 /** Update profile fields (model, display_name, etc.). */
 export async function updateProfile(fields) {
-  const { error } = await client.from("profiles").update(fields);
+  const { data: { user } } = await client.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
+  const { error } = await client.from("profiles").update(fields).eq("id", user.id);
   if (error) throw error;
 }
 

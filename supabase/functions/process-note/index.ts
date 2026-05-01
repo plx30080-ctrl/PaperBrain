@@ -34,12 +34,6 @@ Deno.serve(async (req) => {
     const accessToken = authHeader.replace(/^Bearer\s+/i, "").trim();
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
-    const supabase = createClient(
-      supabaseUrl,
-      supabaseAnonKey,
-      { global: { headers: { authorization: authHeader } } },
-    );
-
     const user = await getUserFromAccessToken(supabaseUrl, supabaseAnonKey, accessToken);
     if (!user) {
       console.error("[process-note] auth error: invalid token", "header present:", !!authHeader);
@@ -255,11 +249,11 @@ async function getUserFromAccessToken(supabaseUrl: string, supabaseAnonKey: stri
 
 function resolveAnthropicModel(model?: string | null) {
   switch (model) {
-    case "claude-opus-4-6":
+    case "claude-opus-4-20250514":
       return "claude-opus-4-20250514";
     case "claude-haiku-4-5-20251001":
       return "claude-haiku-4-5-20251001";
-    case "claude-sonnet-4-6":
+    case "claude-sonnet-4-20250514":
     default:
       return "claude-sonnet-4-20250514";
   }
